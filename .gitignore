@@ -6,3 +6,6 @@
 *.arrow
 .arrow.config
 .arrow.project
+
+# Keep the reproducible importer fixture under version control.
+!examples/dialogic_bridge/*.arrow

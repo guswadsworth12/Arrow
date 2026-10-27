@@ -112,3 +112,10 @@ Have a Good Time
 [arrow-screenshot]: https://mhgolkar.github.io/Arrow/media/overview.v3.png
 <!-- External -->
 [Bow]: https://github.com/mhgolkar/Bow
+
+## This fork: Godot / Dialogic integration
+
+An initial Arrow-to-Dialogic importer is available in `addons/arrow_dialogic`.
+See [installation, supported nodes, limitations, and tests](docs/dialogic-bridge.md).
+The first milestone targets Dialogic 2.0 Alpha 20; AI and hosted collaboration
+features are planned, not implemented yet.

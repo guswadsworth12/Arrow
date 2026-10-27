@@ -1,0 +1,21 @@
+name: Dialogic bridge
+on:
+  push:
+    paths: ['addons/arrow_dialogic/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+  pull_request:
+    paths: ['addons/arrow_dialogic/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+permissions:
+  contents: read
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Godot and Dialogic
+        run: |
+          curl --fail --location --retry 3 --output /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.6-stable/Godot_v4.6-stable_linux.x86_64.zip
+          unzip /tmp/godot.zip -d /tmp/godot
+          git clone --depth 1 --branch 2.0-alpha-20 https://github.com/dialogic-godot/dialogic.git /tmp/dialogic
+          test "$(git -C /tmp/dialogic rev-parse HEAD)" = e301e1bb5e62e6de22c6b7748c4372d0570bb4a7
+      - name: Compiler, Dialogic parser and importer tests
+        run: python3 tests/run_bridge_tests.py --godot /tmp/godot/Godot_v4.6-stable_linux.x86_64 --dialogic /tmp/dialogic

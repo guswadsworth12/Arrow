@@ -1,0 +1,312 @@
+{
+  "title": "Guild briefing \u2014 bridge test (non-canon)",
+  "entry": 1,
+  "meta": {
+    "chapter": 0,
+    "authors": {
+      "0": [
+        "Bridge example",
+        201
+      ]
+    },
+    "editor": "3.1.0",
+    "offline": true,
+    "remote": {}
+  },
+  "resources": {
+    "nodes": {
+      "1": {
+        "type": "entry",
+        "name": "briefing",
+        "data": {
+          "plaque": "Briefing"
+        }
+      },
+      "2": {
+        "type": "content",
+        "name": "opening",
+        "data": {
+          "content": "A sealed request waits on the guild board."
+        }
+      },
+      "3": {
+        "type": "dialog",
+        "name": "approach",
+        "data": {
+          "playable": true,
+          "character": 100,
+          "lines": [
+            "Accept the request.",
+            "Ask for more information."
+          ]
+        }
+      },
+      "4": {
+        "type": "variable_update",
+        "name": "accept",
+        "data": {
+          "variable": 200,
+          "operator": "set",
+          "with": [
+            0,
+            true
+          ]
+        }
+      },
+      "5": {
+        "type": "monolog",
+        "name": "question",
+        "data": {
+          "character": 100,
+          "monolog": "Who posted this request?"
+        }
+      },
+      "6": {
+        "type": "content",
+        "name": "reply",
+        "data": {
+          "content": "The sender has asked to remain unnamed."
+        }
+      },
+      "7": {
+        "type": "condition",
+        "name": "check_acceptance",
+        "data": {
+          "variable": 200,
+          "operator": "eq",
+          "with": [
+            0,
+            true
+          ]
+        }
+      },
+      "8": {
+        "type": "content",
+        "name": "accepted",
+        "data": {
+          "content": "The request is added to your journal."
+        }
+      },
+      "9": {
+        "type": "content",
+        "name": "deferred",
+        "data": {
+          "content": "The request remains on the board."
+        }
+      },
+      "10": {
+        "type": "jump",
+        "name": "next_scene",
+        "data": {
+          "target": 12
+        }
+      },
+      "12": {
+        "type": "entry",
+        "name": "followup_entry",
+        "data": {
+          "plaque": "Follow-up"
+        }
+      },
+      "13": {
+        "type": "content",
+        "name": "followup",
+        "data": {
+          "content": "Outside, Valenne carries on around you."
+        }
+      }
+    },
+    "scenes": {
+      "0": {
+        "name": "Briefing",
+        "entry": 1,
+        "map": {
+          "1": {
+            "offset": [
+              0,
+              0
+            ],
+            "io": [
+              [
+                1,
+                0,
+                2,
+                0
+              ]
+            ]
+          },
+          "2": {
+            "offset": [
+              180,
+              0
+            ],
+            "io": [
+              [
+                2,
+                0,
+                3,
+                0
+              ]
+            ]
+          },
+          "3": {
+            "offset": [
+              360,
+              0
+            ],
+            "io": [
+              [
+                3,
+                0,
+                4,
+                0
+              ],
+              [
+                3,
+                1,
+                5,
+                0
+              ]
+            ]
+          },
+          "4": {
+            "offset": [
+              540,
+              0
+            ],
+            "io": [
+              [
+                4,
+                0,
+                7,
+                0
+              ]
+            ]
+          },
+          "5": {
+            "offset": [
+              0,
+              180
+            ],
+            "io": [
+              [
+                5,
+                0,
+                6,
+                0
+              ]
+            ]
+          },
+          "6": {
+            "offset": [
+              180,
+              180
+            ],
+            "io": [
+              [
+                6,
+                0,
+                7,
+                0
+              ]
+            ]
+          },
+          "7": {
+            "offset": [
+              360,
+              180
+            ],
+            "io": [
+              [
+                7,
+                0,
+                9,
+                0
+              ],
+              [
+                7,
+                1,
+                8,
+                0
+              ]
+            ]
+          },
+          "8": {
+            "offset": [
+              540,
+              180
+            ],
+            "io": [
+              [
+                8,
+                0,
+                10,
+                0
+              ]
+            ]
+          },
+          "9": {
+            "offset": [
+              0,
+              360
+            ],
+            "io": [
+              [
+                9,
+                0,
+                10,
+                0
+              ]
+            ]
+          },
+          "10": {
+            "offset": [
+              180,
+              360
+            ]
+          }
+        }
+      },
+      "11": {
+        "name": "Follow-up",
+        "entry": 12,
+        "map": {
+          "12": {
+            "offset": [
+              0,
+              0
+            ],
+            "io": [
+              [
+                12,
+                0,
+                13,
+                0
+              ]
+            ]
+          },
+          "13": {
+            "offset": [
+              180,
+              0
+            ]
+          }
+        }
+      }
+    },
+    "characters": {
+      "100": {
+        "name": "Rend",
+        "color": "84cba0",
+        "tags": {}
+      }
+    },
+    "variables": {
+      "200": {
+        "name": "request_accepted",
+        "type": "bool",
+        "init": false
+      }
+    }
+  }
+}
