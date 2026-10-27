@@ -11,3 +11,8 @@
 !examples/dialogic_bridge/*.arrow
 
 !examples/dialogic_bridge/story/*.arrow
+
+# Optional story service local state and Python caches
+.arrow-service/
+__pycache__/
+*.py[cod]

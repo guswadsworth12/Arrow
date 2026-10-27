@@ -127,3 +127,11 @@ multiple Arrow files, shared character/variable definitions, explicit chapter
 links, and dependency checks. The [non-canon example](./examples/dialogic_bridge/story/guild_story.json)
 uses different local IDs for the same resources in each chapter. Package manifests
 are currently edited as JSON; hosted persistence and AI editing are future work.
+
+### Shared story service
+
+An optional [HTTP story service and CLI](docs/story-service.md) now provide SQLite
+revision history, compiler-validated edit proposals, conflict detection and
+reversible commits. It uses the same package compiler as the Godot addon. Arrow
+currently exchanges source checkouts through the CLI; integrated UI, MCP and a
+ChatGPT interface remain future work.
