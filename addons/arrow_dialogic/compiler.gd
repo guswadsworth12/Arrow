@@ -10,12 +10,15 @@ var characters: Dictionary
 var edges: Dictionary
 var bindings: Dictionary
 const COMPARISONS = {"eq": "==", "nq": "!=", "gt": ">", "gte": ">=", "ls": "<", "lse": "<="}
+const MAX_EXACT_INTEGER = 9007199254740991
 const SUPPORTED = ["entry", "content", "monolog", "dialog", "condition", "variable_update", "jump"]
 
 func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dictionary:
 	errors.clear()
 	edges = {}
 	bindings = character_bindings
+	if not _validate_shape(document):
+		return {"ok": false, "errors": errors.duplicate(), "timeline": ""}
 	var resources = document.get("resources", {})
 	if not resources is Dictionary:
 		return _failure("resources must be an object")
@@ -28,17 +31,17 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 	if nodes.is_empty():
 		return _failure("No nodes found")
 	for id in nodes:
-		if not _valid_id(str(id)) or not nodes[id] is Dictionary:
+		if not id is String or not _valid_id(id) or not nodes[id] is Dictionary:
 			return _failure("Invalid node ID or object: %s" % id)
 		if not nodes[id].get("data", {}) is Dictionary:
 			return _failure("Node %s data must be an object" % id)
 		edges[str(id)] = {}
 	for id in characters:
-		if not _valid_id(str(id)) or not characters[id] is Dictionary or not characters[id].get("name", "") is String:
+		if not id is String or not _valid_id(id) or not characters[id] is Dictionary or not characters[id].get("name") is String:
 			return _failure("Invalid character %s" % id)
 	for id in variables:
 		var item = variables[id]
-		if not item is Dictionary or not _identifier(item.get("name", "")):
+		if not id is String or not _valid_id(id) or not item is Dictionary or not _identifier(item.get("name", "")):
 			return _failure("Variable %s needs an identifier-style name" % id)
 		if not _literal_matches(item.get("init"), item.get("type", "")):
 			return _failure("Variable %s has an unsupported type or default" % id)
@@ -52,6 +55,10 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 		var scene = resources.scenes[scene_id]
 		if not scene is Dictionary or not scene.get("map", {}) is Dictionary:
 			return _failure("Invalid scene %s" % scene_id)
+		if scene.has("entry") and (not _integer(scene.entry, -1) or (scene.entry >= 0 and (not scene.get("map", {}).has(str(int(scene.entry))) or nodes.get(str(int(scene.entry)), {}).get("type") != "entry"))):
+			return _failure("Scene %s has an invalid entry" % scene_id)
+		if scene.get("macro", false) != false:
+			return _failure("Scene %s: macros are not supported" % scene_id)
 		for raw_id in scene.get("map", {}):
 			var id = str(raw_id)
 			if not nodes.has(id) or seen_nodes.has(id):
@@ -63,7 +70,7 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 			if placement.get("skip", false):
 				errors.append("Node %s: skipped nodes are not supported yet" % id)
 			for wire in placement.get("io", []):
-				if not wire is Array or wire.size() != 4:
+				if not wire is Array or wire.size() != 4 or not wire.all(func(value): return _integer(value, 0)):
 					return _failure("Malformed connection at node %s" % id)
 				var target = str(int(wire[2]))
 				var slot = int(wire[1])
@@ -76,7 +83,7 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 		if not seen_nodes.has(id):
 			errors.append("Node %s is not placed in a scene" % id)
 	var entry = str(int(document.get("entry", -1)))
-	if not nodes.has(entry):
+	if not nodes.has(entry) or nodes[entry].get("type") != "entry":
 		return _failure("Missing project entry")
 	var lines: Array[String] = ["# Generated from Arrow; edit the .arrow source.", "jump arrow_%s" % entry]
 	var ids = nodes.keys()
@@ -122,7 +129,7 @@ func _emit_node(id: String, lines: Array[String]) -> void:
 			max_slot = choices.size() - 1
 			if data.get("playable", false):
 				for i in choices.size():
-					var text = str(choices[i])
+					var text: String = choices[i]
 					if not _safe_text(text) or "|" in text or "\n" in text:
 						errors.append("Node %s: choice needs plain, single-line text without |" % id)
 					lines.append("- " + text)
@@ -176,7 +183,7 @@ func _speaker(value: Variant) -> String:
 		return "_"
 	# Explicit bindings are existing Dialogic character identifiers, not file paths.
 	var name = str(bindings.get(id, characters[id].get("name", "")))
-	if name.is_empty() or '"' in name or ":" in name or "\n" in name or "{" in name or "/" in name or "\\" in name:
+	if name.strip_edges().is_empty() or name != name.strip_edges() or name == "_" or "\r" in name or "\t" in name or "]" in name or "}" in name or '"' in name or ":" in name or "\n" in name or "{" in name or "/" in name or "\\" in name:
 		errors.append("Invalid character identifier for %s" % id)
 		return "_"
 	return '"%s"' % name
@@ -190,7 +197,7 @@ func _emit_text(text: String, speaker: String, lines: Array[String]) -> void:
 			lines.append(speaker + ": " + paragraph.replace(":", "\\:"))
 
 func _safe_text(text: String) -> bool:
-	return not text.is_empty() and not "{" in text and not "}" in text and not "[" in text and not "]" in text and not "\\" in text and not "\r" in text and not "\t" in text
+	return not text.is_empty() and not "{" in text and not "}" in text and not "[" in text and not "]" in text and not "\\" in text and not "\r" in text and not "\t" in text and not "<" in text and not ">" in text
 
 func _operand(data: Dictionary, variable: Dictionary) -> String:
 	var operand = data.get("with", [])
@@ -212,19 +219,19 @@ func _operand(data: Dictionary, variable: Dictionary) -> String:
 	if not _literal_matches(value, variable.type):
 		errors.append("Operand type does not match variable")
 		return "false"
-	if value is String and ('"' in value or "\\" in value or "\n" in value or "{" in value or "[" in value):
+	if value is String and ('"' in value or "\\" in value or "\n" in value or "\r" in value or "\t" in value or "{" in value or "}" in value or "[" in value or "]" in value):
 		errors.append("Unsupported characters in string assignment")
 	return JSON.stringify(value)
 
-func _literal_matches(value: Variant, type: String) -> bool:
+func _literal_matches(value: Variant, type: Variant) -> bool:
 	match type:
 		"bool": return value is bool
 		"str": return value is String
-		"num": return (value is int or value is float) and is_finite(float(value)) and float(value) == floor(float(value))
+		"num": return (value is int or value is float) and is_finite(float(value)) and abs(value) <= MAX_EXACT_INTEGER and float(value) == floor(float(value))
 	return false
 
 func _identifier(value: Variant) -> bool:
-	return value is String and value.is_valid_identifier()
+	return value is String and RegEx.create_from_string("^[A-Za-z_][A-Za-z0-9_]*$").search(value) != null
 
 func _valid_id(value: String) -> bool:
 	return value.is_valid_int() and int(value) >= 0 and str(int(value)) == value
@@ -232,3 +239,60 @@ func _valid_id(value: String) -> bool:
 func _failure(message: String) -> Dictionary:
 	errors.append(message)
 	return {"ok": false, "errors": errors.duplicate(), "timeline": ""}
+
+# JSON numbers arrive as floats. Never truncate fractional references or accept
+# booleans/strings/containers as IDs. Larger numeric IDs cannot round-trip exactly.
+func _integer(value: Variant, minimum: int = -1) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and value >= minimum and value <= MAX_EXACT_INTEGER and value == floor(float(value))
+
+func _validate_shape(document: Dictionary) -> bool:
+	if not document.get("title", "") is String or not _integer(document.get("entry"), 0):
+		return _shape_error("Project title must be text and entry must be an exact nonnegative integer")
+	var resources = document.get("resources")
+	if not resources is Dictionary:
+		return _shape_error("resources must be an object")
+	for collection in ["nodes", "scenes", "variables", "characters"]:
+		if not resources.get(collection, {}) is Dictionary:
+			return _shape_error("resources.%s must be an object" % collection)
+	for id in resources.get("nodes", {}):
+		var node = resources.nodes[id]
+		if not node is Dictionary or not node.get("type") is String or not node.get("data") is Dictionary:
+			return _shape_error("Node %s needs a type string and data object" % id)
+		var data: Dictionary = node.data
+		for field in ["title", "content", "monolog", "operator"]:
+			if data.has(field) and not data[field] is String:
+				return _shape_error("Node %s: %s must be text" % [id, field])
+		for field in ["auto", "clear", "playable"]:
+			if data.has(field) and not data[field] is bool:
+				return _shape_error("Node %s: %s must be boolean" % [id, field])
+		for field in ["character", "variable", "target", "brief"]:
+			# Arrow uses -254 as its anonymous character sentinel.
+			if data.has(field) and not _integer(data[field], -254 if field == "character" else -1):
+				return _shape_error("Node %s: %s must be an exact integer" % [id, field])
+		if node.type == "dialog":
+			if not data.get("lines") is Array or data.lines.is_empty():
+				return _shape_error("Node %s: dialog needs lines" % id)
+			for line in data.lines:
+				if not line is String or line.strip_edges().is_empty():
+					return _shape_error("Node %s: dialog lines must be nonblank text" % id)
+		if node.type in ["condition", "variable_update"]:
+			var operand = data.get("with")
+			if not operand is Array or operand.size() != 2 or not _integer(operand[0], 0) or (operand[0] != 0 and operand[0] != 1):
+				return _shape_error("Node %s: invalid operand mode or shape" % id)
+			if operand[0] == 1 and not _integer(operand[1], 0):
+				return _shape_error("Node %s: operand variable must be an exact ID" % id)
+	for id in resources.get("scenes", {}):
+		var scene = resources.scenes[id]
+		if not id is String or not _valid_id(id) or not scene is Dictionary or not scene.get("map") is Dictionary:
+			return _shape_error("Invalid scene %s" % id)
+		for placement in scene.map.values():
+			if not placement is Dictionary or (placement.has("skip") and not placement.skip is bool):
+				return _shape_error("Scene %s: invalid placement or skip flag" % id)
+	for id in bindings:
+		if not id is String or not _valid_id(id) or not bindings[id] is String or not resources.get("characters", {}).has(id):
+			return _shape_error("Unknown or malformed character binding %s" % id)
+	return true
+
+func _shape_error(message: String) -> bool:
+	errors.append(message)
+	return false

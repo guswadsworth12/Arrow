@@ -14,8 +14,9 @@ jobs:
       - name: Install pinned Godot and Dialogic
         run: |
           curl --fail --location --retry 3 --output /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.6-stable/Godot_v4.6-stable_linux.x86_64.zip
+          echo '0c1bc5e8dca8f892a9a5fd0628b742f399fbd520e5f0051ecac021c0aa4ea5a8f0d237c8ed6b767b2afda7f7a4b32001118f1b04a82e335a5e35b947a1217940  /tmp/godot.zip' | sha512sum --check
           unzip /tmp/godot.zip -d /tmp/godot
           git clone --depth 1 --branch 2.0-alpha-20 https://github.com/dialogic-godot/dialogic.git /tmp/dialogic
           test "$(git -C /tmp/dialogic rev-parse HEAD)" = e301e1bb5e62e6de22c6b7748c4372d0570bb4a7
       - name: Compiler, Dialogic parser and importer tests
-        run: python3 tests/run_bridge_tests.py --godot /tmp/godot/Godot_v4.6-stable_linux.x86_64 --dialogic /tmp/dialogic
+        run: python3 tests/run_bridge_tests.py --godot /tmp/godot/Godot_v4.6-stable_linux.x86_64 --dialogic /tmp/dialogic --arrow

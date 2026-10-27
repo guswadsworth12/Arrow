@@ -1,6 +1,6 @@
-# Arrow to Dialogic bridge — v0.1
+# Arrow to Dialogic bridge — v0.2
 
-This is the first integration milestone for this Arrow fork. It adds a native
+This hardens the first integration milestone for this Arrow fork. It adds a native
 Godot EditorPlugin, a strict compiler, a non-canon example, and isolated tests.
 It does not yet add AI editing, hosted storage, or cross-document authoring.
 
@@ -47,9 +47,23 @@ those characters in Dialogic first. A bound character gets no generated stub.
 Keep Arrow as the authored source. Editing a generated `.dtl` is temporary:
 reimport replaces it. There is no reverse import in this milestone.
 
-Output files are replaced through individual temporary files. Validation errors
-produce no output; an I/O error during publishing can leave a partially updated
-output directory. Review the error and reimport after fixing the filesystem.
+Imports stage the timeline, manifest, new character stubs, and project settings
+before replacing any published files. Handled write/rename failures roll back the
+whole file set and leave in-memory defaults and resource registrations unchanged.
+If rollback itself fails, the error identifies retained backup paths for recovery.
+Validation failures never publish output. The manifest must belong to the selected
+source before an existing output directory can be replaced.
+
+This is recovery from ordinary I/O failures, **not** a crash-safe filesystem
+transaction. A process crash or power loss during replacement may require restoring
+`.arrow-backup-*` files. Use one editor/importer at a time, and keep authored files
+under version control. Existing character stubs are checked as Dialogic resources;
+identifier collisions and stale/unknown explicit bindings stop the import.
+
+Generated characters and timelines are registered explicitly by stable identifiers;
+character display names do not determine their identity. Existing integer and
+floating-point numeric defaults are treated as the same numeric type. Other
+conflicting types stop import. No runtime state or game autoload is modified.
 
 ## Supported subset
 
@@ -69,13 +83,14 @@ on the right-hand side means its **initial value** in Arrow; the compiler preser
 that meaning rather than substituting its current runtime value.
 
 Boolean, string and integer-valued numeric variable defaults are supported. Names
-must be simple identifiers (letters, digits, underscores, not starting with a
-digit). An unwired output ends that branch. Multiline narration becomes separate
+must be ASCII identifiers (letters, digits, underscores, not starting with a
+digit). Numeric references and values must be exact integers within ±(2^53−1);
+fractional, overflowing, and coercible string/boolean references are rejected. An unwired output ends that branch. Multiline narration becomes separate
 text events. Player choices are displayed as options, not voiced speech events.
 
 Explicitly unsupported: other node types (macros, tags, randomizers, generators,
 sequencers, hubs, interactions, user input, markers and frames), skipped nodes,
-markup/interpolation in prose, backslashes, string comparisons, arithmetic updates,
+markup/interpolation or angle-bracket random text syntax in prose, backslashes, string comparisons, arithmetic updates,
 nonzero target input slots, and independent chapter-file linking. Even unsupported
 unreachable nodes fail validation, rather than silently disappearing.
 
@@ -102,8 +117,12 @@ python3 tests/run_bridge_tests.py --godot /path/to/godot --dialogic /path/to/dia
 ```
 
 Use the pinned Alpha 20 checkout for the second command. The harness copies files
-into an isolated temporary project. `--work-dir /tmp/arrow-bridge-test` keeps logs
-and imported resources for troubleshooting. It checks Godot script errors as well
+into an isolated temporary project with separate Godot user data, configuration,
+and caches. When `--dialogic` is supplied it verifies the exact pinned checkout
+commit before testing. It does not verify uncommitted edits to that checkout. `--work-dir /tmp/arrow-bridge-test` keeps a fresh `run-*` directory containing
+separate numbered logs and imported resources for troubleshooting. Existing runs
+are never overwritten. A required success marker, process exit status, and absence
+of Godot/script errors must all agree before a test stage passes. It checks Godot script errors as well
 as process exit status. Compiler tests verify wiring, deterministic output,
 unsupported behavior, bad references, typed operands and prose escaping. The
 Dialogic test uses its actual event parser and variable/expression subsystems.
@@ -111,13 +130,39 @@ An editor smoke test runs the real importer, loads the generated character,
 reimports without resetting defaults, and checks that invalid input preserves
 the existing generated timeline.
 
-Verified locally with Godot 4.6 stable and the pinned Dialogic Alpha 20 source.
-The compiler-only tests also passed on Godot 4.5.1. The target game and its
-visual presentation have not been tested here.
+Additional checks:
+
+```sh
+# Open both example scenes, draw every graph node, and load every inspector.
+python3 tests/run_bridge_tests.py --godot godot --arrow
+
+# Exercise actual Dialogic playback; --visual requires an X11/display session.
+# Captures choice controls and branch outcomes in the retained run directory.
+python3 tests/run_bridge_tests.py --godot godot --dialogic /path/to/dialogic-checkout \
+  --arrow --visual --work-dir /tmp/arrow-bridge-visual
+```
+
+The Arrow check imports a separate copy of the editor so it cannot rewrite the
+checkout's tracked import metadata. Compiler regressions cover malformed JSON
+fields, exact numeric references, unsupported syntax and stable graph semantics.
+Publisher tests inject each backup/replace failure, including project settings.
+The real importer checks resolved character resources, numeric/default preservation,
+rollback of files and memory, reimport, and invalid-import preservation. Playback
+uses real Dialogic layouts and choice buttons, follows both outcomes into the
+second scene, and asks again after acceptance to verify state persists.
+
+Verified locally with **Godot 4.6.3** and the pinned Dialogic Alpha 20 source:
+compiler/publication regressions; real parser/subsystems; editor import and rollback;
+rendered choice and branch playback; and the example in Arrow. These visual checks
+use a minimal project and the default Dialogic style, not Jade Lantern's game UI.
+The earlier v0.1 compiler was tested on Godot 4.5.1; the v0.2 changes have not been
+rechecked on that version. CI targets Godot 4.6 with an official SHA-512 checksum;
+GitHub Actions has not been observed running. No game project is present in this
+workspace, so no existing game conversation or adapter has been changed.
 
 ## Next milestones
 
-1. Verify the addon UI and both branches in the actual game; map quest/game state.
+1. Verify the addon UI and both branches in the actual game; map quest/game state through a small adapter without changing the playable demo.
 2. Add supported node mappings and asset bindings as real scenes require them.
 3. Shared character/variable registry and cross-document dependency tracking.
 4. Hosted persistence with revision checks; structured MCP editing operations.
