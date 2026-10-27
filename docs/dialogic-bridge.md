@@ -1,8 +1,8 @@
-# Arrow to Dialogic bridge — v0.2
+# Arrow to Dialogic bridge — v0.3
 
 This hardens the first integration milestone for this Arrow fork. It adds a native
 Godot EditorPlugin, a strict compiler, a non-canon example, and isolated tests.
-It does not yet add AI editing, hosted storage, or cross-document authoring.
+It also supports [linked story packages](story-packages.md) with shared character/variable registries and explicit cross-document links. AI editing and hosted storage are not implemented.
 
 ## Install in a game
 
@@ -11,7 +11,7 @@ It does not yet add AI editing, hosted storage, or cross-document authoring.
    `e301e1bb5e62e6de22c6b7748c4372d0570bb4a7`.
 2. Copy **only** `addons/arrow_dialogic` from this repository into your game's
    `addons/` directory. Enable **Arrow to Dialogic** in Project Settings → Plugins.
-3. Copy an Arrow `.arrow` document or JSON export into your game project.
+3. Copy an Arrow `.arrow` document, JSON export, or story manifest and its chapter files into your game project.
 4. Choose **Project → Tools → Import Arrow into Dialogic…**, then select it.
 5. The result dialog gives the generated `story.dtl` path and a
    `Dialogic.start("res://generated/arrow/…/story.dtl")` call.
@@ -91,7 +91,7 @@ text events. Player choices are displayed as options, not voiced speech events.
 Explicitly unsupported: other node types (macros, tags, randomizers, generators,
 sequencers, hubs, interactions, user input, markers and frames), skipped nodes,
 markup/interpolation or angle-bracket random text syntax in prose, backslashes, string comparisons, arithmetic updates,
-nonzero target input slots, and independent chapter-file linking. Even unsupported
+nonzero target input slots, and implicit chapter-file linking without a story manifest. Even unsupported
 unreachable nodes fail validation, rather than silently disappearing.
 
 Character color/tags, voice, portrait commands and Arrow console presentation are
@@ -101,6 +101,13 @@ quest actions and game-state binding are later milestones, not implemented here.
 The compiler translates graph cycles but does not prove termination. Dialogic
 jumps have their own runtime semantics; test long-running loops before using them
 in production. Runtime performance and your game's UI still need game-level QA.
+
+## Linked chapters
+
+[Story packages](story-packages.md) provide shared character/variable registries,
+explicit links between Arrow documents, stable chapter entry labels and checksum
+dependency reports. Use the JSON manifest for package import; individual chapter
+files remain editable in Arrow. Game state and save/load remain game-owned.
 
 ## Example
 
@@ -153,17 +160,17 @@ second scene, and asks again after acceptance to verify state persists.
 
 Verified locally with **Godot 4.6.3** and the pinned Dialogic Alpha 20 source:
 compiler/publication regressions; real parser/subsystems; editor import and rollback;
-rendered choice and branch playback; and the example in Arrow. These visual checks
+rendered choice and branch playback; linked package import, dependency checks and playback; and all examples in Arrow. These visual checks
 use a minimal project and the default Dialogic style, not Jade Lantern's game UI.
-The earlier v0.1 compiler was tested on Godot 4.5.1; the v0.2 changes have not been
+The earlier v0.1 compiler was tested on Godot 4.5.1; v0.2/v0.3 changes have not been
 rechecked on that version. CI targets Godot 4.6 with an official SHA-512 checksum;
 GitHub Actions has not been observed running. No game project is present in this
 workspace, so no existing game conversation or adapter has been changed.
 
 ## Next milestones
 
-1. Verify the addon UI and both branches in the actual game; map quest/game state through a small adapter without changing the playable demo.
+1. Verify the addon UI and linked chapter branches in the actual game; map quest/game state through a small adapter without changing the playable demo.
 2. Add supported node mappings and asset bindings as real scenes require them.
-3. Shared character/variable registry and cross-document dependency tracking.
+3. Integrated Arrow UI for the available package registry, cross-document links and dependency status.
 4. Hosted persistence with revision checks; structured MCP editing operations.
 5. AI change review and a ChatGPT interface over the same authoritative project.

@@ -119,3 +119,11 @@ An initial Arrow-to-Dialogic importer is available in `addons/arrow_dialogic`.
 See [installation, supported nodes, limitations, and tests](docs/dialogic-bridge.md).
 The first milestone targets Dialogic 2.0 Alpha 20; AI and hosted collaboration
 features are planned, not implemented yet.
+
+### Linked chapter packages
+
+This fork can also import a [story package](./docs/story-packages.md) containing
+multiple Arrow files, shared character/variable definitions, explicit chapter
+links, and dependency checks. The [non-canon example](./examples/dialogic_bridge/story/guild_story.json)
+uses different local IDs for the same resources in each chapter. Package manifests
+are currently edited as JSON; hosted persistence and AI editing are future work.

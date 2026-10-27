@@ -9,3 +9,5 @@
 
 # Keep the reproducible importer fixture under version control.
 !examples/dialogic_bridge/*.arrow
+
+!examples/dialogic_bridge/story/*.arrow

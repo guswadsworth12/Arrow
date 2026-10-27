@@ -9,14 +9,16 @@ var variables: Dictionary
 var characters: Dictionary
 var edges: Dictionary
 var bindings: Dictionary
+var labels: Dictionary
 const COMPARISONS = {"eq": "==", "nq": "!=", "gt": ">", "gte": ">=", "ls": "<", "lse": "<="}
 const MAX_EXACT_INTEGER = 9007199254740991
 const SUPPORTED = ["entry", "content", "monolog", "dialog", "condition", "variable_update", "jump"]
 
-func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dictionary:
+func compile(document: Dictionary, character_bindings: Dictionary = {}, node_labels: Dictionary = {}) -> Dictionary:
 	errors.clear()
 	edges = {}
 	bindings = character_bindings
+	labels = node_labels
 	if not _validate_shape(document):
 		return {"ok": false, "errors": errors.duplicate(), "timeline": ""}
 	var resources = document.get("resources", {})
@@ -36,6 +38,15 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 		if not nodes[id].get("data", {}) is Dictionary:
 			return _failure("Node %s data must be an object" % id)
 		edges[str(id)] = {}
+	var used_labels: Dictionary = {}
+	for id in labels:
+		if not nodes.has(id):
+			return _failure("Label mapping references unknown node %s" % id)
+	for id in nodes:
+		var label = _label(id)
+		if not _identifier(label) or used_labels.has(label):
+			return _failure("Invalid or duplicate timeline label at node %s" % id)
+		used_labels[label] = true
 	for id in characters:
 		if not id is String or not _valid_id(id) or not characters[id] is Dictionary or not characters[id].get("name") is String:
 			return _failure("Invalid character %s" % id)
@@ -85,11 +96,11 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 	var entry = str(int(document.get("entry", -1)))
 	if not nodes.has(entry) or nodes[entry].get("type") != "entry":
 		return _failure("Missing project entry")
-	var lines: Array[String] = ["# Generated from Arrow; edit the .arrow source.", "jump arrow_%s" % entry]
+	var lines: Array[String] = ["# Generated from Arrow; edit the .arrow source.", "jump " + _label(entry)]
 	var ids = nodes.keys()
 	ids.sort_custom(func(a, b): return int(a) < int(b))
 	for id in ids:
-		lines.append("label arrow_%s" % id)
+		lines.append("label " + _label(id))
 		_emit_node(str(id), lines)
 	# Every block ends in a jump or end_timeline: no accidental fallthrough.
 	var defaults: Dictionary = {}
@@ -99,7 +110,7 @@ func compile(document: Dictionary, character_bindings: Dictionary = {}) -> Dicti
 		return {"ok": false, "errors": errors.duplicate(), "timeline": ""}
 	return {"ok": true, "errors": [], "timeline": "\n".join(lines) + "\n",
 		"manifest": {"format": 1, "target": "Dialogic 2.0-alpha-20", "title": document.get("title", ""),
-			"entry_label": "arrow_%s" % entry, "variable_defaults": defaults,
+			"entry_label": _label(entry), "variable_defaults": defaults,
 			"characters": characters, "node_labels": ids}}
 
 func _emit_node(id: String, lines: Array[String]) -> void:
@@ -162,7 +173,7 @@ func _emit_node(id: String, lines: Array[String]) -> void:
 			var target = str(int(data.get("target", -1)))
 			if not nodes.has(target):
 				errors.append("Node %s: missing jump target %s" % [id, target])
-			lines.append("jump arrow_%s" % target)
+			lines.append("jump " + _label(target))
 	for slot in edges[id]:
 		if slot > max_slot or type == "jump":
 			errors.append("Node %s: unexpected outgoing slot %s" % [id, slot])
@@ -171,7 +182,7 @@ func _emit_node(id: String, lines: Array[String]) -> void:
 
 func _next(id: String, slot: int) -> String:
 	if edges[id].has(slot):
-		return "jump arrow_%s" % edges[id][slot]
+		return "jump " + _label(edges[id][slot])
 	return "[end_timeline]"
 
 func _speaker(value: Variant) -> String:
@@ -231,7 +242,7 @@ func _literal_matches(value: Variant, type: Variant) -> bool:
 	return false
 
 func _identifier(value: Variant) -> bool:
-	return value is String and RegEx.create_from_string("^[A-Za-z_][A-Za-z0-9_]*$").search(value) != null
+	return value is String and value.is_valid_identifier() and RegEx.create_from_string("^[A-Za-z_][A-Za-z0-9_]*$").search(value) != null
 
 func _valid_id(value: String) -> bool:
 	return value.is_valid_int() and int(value) >= 0 and str(int(value)) == value
@@ -296,3 +307,6 @@ func _validate_shape(document: Dictionary) -> bool:
 func _shape_error(message: String) -> bool:
 	errors.append(message)
 	return false
+
+func _label(id: String) -> Variant:
+	return labels.get(id, "arrow_" + id)

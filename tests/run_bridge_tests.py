@@ -54,8 +54,11 @@ with (contextlib.nullcontext(str(args.work_dir)) if args.work_dir else tempfile.
         if result.returncode or re.search(r'(?m)^(SCRIPT ERROR:|ERROR:)', output) or (expect and expect not in output):
             print(output[-18000:])
             raise SystemExit(result.returncode or 1)
-        print('\n'.join(line for line in output.splitlines() if 'Bridge compiler:' in line or 'Dialogic Alpha' in line or 'Arrow example:' in line))
+        print('\n'.join(line for line in output.splitlines() if 'Bridge compiler:' in line or 'Dialogic Alpha' in line or 'Arrow example:' in line or 'Story package' in line))
     run('--script', 'res://test_compiler.gd', expect='Bridge compiler:')
+    shutil.copytree(root / 'examples/dialogic_bridge/story', work / 'story')
+    shutil.copy(root / 'tests/bridge/test_story.gd', work / 'test_story.gd')
+    run('--script', 'res://test_story.gd', expect='Story package:')
     if args.arrow:
         arrow = work / 'arrow-editor'
         shutil.copytree(root, arrow, ignore=shutil.ignore_patterns('.git', '.godot', '.arrow.config', '*.log', '__pycache__'))
@@ -79,3 +82,9 @@ with (contextlib.nullcontext(str(args.work_dir)) if args.work_dir else tempfile.
 
         shutil.copy(root / 'tests/bridge/test_playback.gd', work / 'test_playback.gd')
         run('--script', 'res://test_playback.gd', expect='persistent state verified', visual=args.visual)
+
+        shutil.copy(root / 'tests/bridge/test_story_importer.gd', driver / 'test_story_importer.gd')
+        (driver / 'plugin.cfg').write_text((driver / 'plugin.cfg').read_text().replace('test_importer.gd', 'test_story_importer.gd'))
+        run('--editor', '--quit-after', '600', expect='Story package importer:')
+        shutil.copy(root / 'tests/bridge/test_story_playback.gd', work / 'test_story_playback.gd')
+        run('--script', 'res://test_story_playback.gd', expect='direct chapter entry verified', visual=args.visual)
