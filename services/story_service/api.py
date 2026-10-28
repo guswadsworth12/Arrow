@@ -6,12 +6,15 @@ import secrets
 import sqlite3
 from urllib.parse import urlsplit
 
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 
+from . import access as cloudflare_access
+from .access import BEARER_ACTOR, AccessVerifier
 from .model import ServiceError, parse_json
 from .store import Store
 from .validator import GodotValidator
@@ -80,10 +83,16 @@ def browser_origins() -> list[str]:
     return values
 
 
-def create_app(*, store: Store | None = None, token: str | None = None, max_body: int = 8 * 1024 * 1024) -> FastAPI:
+ACCESS_FROM_ENVIRONMENT = object()
+
+
+def create_app(*, store: Store | None = None, token: str | None = None, max_body: int = 8 * 1024 * 1024,
+               access: AccessVerifier | None | object = ACCESS_FROM_ENVIRONMENT) -> FastAPI:
     token = token if token is not None else os.environ.get("ARROW_STORY_API_TOKEN", "")
     if not isinstance(token, str) or len(token) < 32 or any(not 33 <= ord(char) <= 126 for char in token):
         raise RuntimeError("Set ARROW_STORY_API_TOKEN to an ASCII bearer secret of at least 32 characters")
+    if access is ACCESS_FROM_ENVIRONMENT:
+        access = cloudflare_access.from_environment()
     if store is None:
         validator = GodotValidator(os.environ.get("ARROW_STORY_GODOT", "godot"))
         store = Store(Path(os.environ.get("ARROW_STORY_DB", ".arrow-service/stories.sqlite3")), validator)
@@ -94,9 +103,15 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     app.add_middleware(CORSMiddleware, allow_origins=browser_origins(), allow_methods=["GET", "POST"],
                        allow_headers=["Authorization", "Content-Type"], allow_credentials=False)
 
-    async def authorize(authorization: str | None = Header(default=None)):
+    async def authorize(authorization: str | None = Header(default=None),
+                        assertion: str | None = Header(default=None, alias="Cf-Access-Jwt-Assertion")) -> str:
+        """Return who is acting: a Cloudflare Access identity, or the shared bearer token."""
+        # Behind Access every request carries a signed assertion; it alone decides who is acting.
+        if access is not None and assertion:
+            return await run_in_threadpool(access.identity, assertion)
         if authorization is None or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:].encode(), token.encode()):
-            raise ServiceError(401, "unauthorized", "A valid bearer token is required")
+            raise ServiceError(401, "unauthorized", "A valid bearer token or Cloudflare Access sign-in is required")
+        return BEARER_ACTOR
 
     async def body(request: Request, fields: set) -> dict:
         if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -119,16 +134,19 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     def health():
         return {"status": "ok"}
 
+    @app.get("/v1/session")
+    def session(actor: str = Depends(authorize)):
+        return {"actor": actor, "via": "bearer-token" if actor == BEARER_ACTOR else "cloudflare-access"}
+
     @app.get("/v1/stories", dependencies=[Depends(authorize)])
     def stories():
         return {"stories": store.list_stories()}
 
-    @app.post("/v1/stories", dependencies=[Depends(authorize)], status_code=201)
-    async def create(request: Request):
+    @app.post("/v1/stories", status_code=201)
+    async def create(request: Request, actor: str = Depends(authorize)):
         value = await body(request, {"bundle", "message"})
         # Native validation is blocking; run it outside the ASGI event loop.
-        from starlette.concurrency import run_in_threadpool
-        return await run_in_threadpool(store.create, value["bundle"], value["message"])
+        return await run_in_threadpool(store.create, value["bundle"], value["message"], actor)
 
     @app.get("/v1/stories/{story_id}", dependencies=[Depends(authorize)])
     def read(story_id: str):
@@ -142,11 +160,10 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     def revision(story_id: str, revision: int):
         return store.read(story_id, revision)
 
-    @app.post("/v1/stories/{story_id}/proposals", dependencies=[Depends(authorize)], status_code=201)
-    async def propose(story_id: str, request: Request):
+    @app.post("/v1/stories/{story_id}/proposals", status_code=201)
+    async def propose(story_id: str, request: Request, actor: str = Depends(authorize)):
         value = await body(request, {"base_revision", "operations", "message"})
-        from starlette.concurrency import run_in_threadpool
-        return await run_in_threadpool(store.propose, story_id, value["base_revision"], value["operations"], value["message"])
+        return await run_in_threadpool(store.propose, story_id, value["base_revision"], value["operations"], value["message"], actor)
 
     @app.get("/v1/stories/{story_id}/proposals", dependencies=[Depends(authorize)])
     def proposals(story_id: str, after: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
@@ -156,11 +173,10 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     def proposal(story_id: str, proposal_id: str):
         return store.proposal(story_id, proposal_id)
 
-    @app.post("/v1/stories/{story_id}/proposals/{proposal_id}/apply", dependencies=[Depends(authorize)])
-    async def apply(story_id: str, proposal_id: str, request: Request):
+    @app.post("/v1/stories/{story_id}/proposals/{proposal_id}/apply")
+    async def apply(story_id: str, proposal_id: str, request: Request, actor: str = Depends(authorize)):
         await body(request, set())
-        from starlette.concurrency import run_in_threadpool
-        return await run_in_threadpool(store.apply, story_id, proposal_id)
+        return await run_in_threadpool(store.apply, story_id, proposal_id, actor)
 
     web_root = os.environ.get("ARROW_STORY_WEB_ROOT")
     if web_root:

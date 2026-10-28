@@ -23,6 +23,7 @@ var bindings: Dictionary = {}
 var cursor = 0
 var last_cursor = 0
 var working = false
+var connected = false
 var import_picker: FileDialog
 var story_settings: Window
 var browser_reader
@@ -35,6 +36,7 @@ func _ready() -> void:
 	size = Vector2i(1040, 730)
 	min_size = Vector2i(760, 580)
 	close_requested.connect(hide)
+	visibility_changed.connect(_connect_signed_in)
 	client = Client.new()
 	add_child(client)
 	var margin = MarginContainer.new()
@@ -48,9 +50,12 @@ func _ready() -> void:
 	server = _field(connection, "Service URL", OS.get_environment("ARROW_STORY_URL"))
 	if server.text.is_empty():
 		server.text = str(JavaScriptBridge.get_interface("location").origin) if Html5Helpers.Utils.is_browser() else "http://127.0.0.1:8765"
-	token = _field(connection, "Bearer token (session only)", OS.get_environment("ARROW_STORY_API_TOKEN"))
+	var token_hint = "Bearer token (blank when signed in)" if Html5Helpers.Utils.is_browser() else "Bearer token (session only)"
+	token = _field(connection, token_hint, OS.get_environment("ARROW_STORY_API_TOKEN"))
 	token.secret = true
 	_button(connection, "Connect", connect_service)
+	if Html5Helpers.Utils.is_browser():
+		_button(connection, "Sign in…", sign_in)
 	var story_row = _row(layout)
 	stories = OptionButton.new()
 	stories.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -133,6 +138,8 @@ func _ready() -> void:
 					chapters.add_item(chapter)
 				status.text = "Cached story loaded for offline reading/export. Enter your token and connect for shared edits."
 	_set_working(false)
+	# A new Window is already visible, so the first open never emits visibility_changed.
+	_connect_signed_in.call_deferred()
 
 func _row(parent: Node) -> HBoxContainer:
 	var row = HBoxContainer.new()
@@ -182,13 +189,34 @@ func _connection_changed() -> void:
 	_clear_review()
 	client.base_url = ""
 	client.bearer = ""
+	connected = false
 	status.text = "Connection changed. Connect again. Local chapter bindings retain their original service and revision."
 
 func _configure() -> bool:
 	if not client.configure(server.text, token.text):
-		status.text = "Use HTTPS (or HTTP on loopback) and a printable bearer token of at least 32 characters."
+		status.text = "Use HTTPS (or HTTP on loopback) and a printable bearer token of at least 32 characters, or leave the token blank to use this site's sign-in."
 		return false
 	return true
+
+## Browser only: connect with this site's Cloudflare Access sign-in when the window opens.
+## A separate probe client checks quietly first, so a site without Access leaves the window untouched.
+func _connect_signed_in() -> void:
+	if not visible or connected or working or not token.text.is_empty() or not Client.same_origin(server.text):
+		return
+	var probe = Client.new()
+	add_child(probe)
+	var signed_in = false
+	if probe.configure(server.text, ""):
+		var session = await probe.request(HTTPClient.METHOD_GET, "/v1/session")
+		signed_in = session.ok
+	probe.queue_free()
+	if signed_in and not connected and not working and token.text.is_empty() and Client.same_origin(server.text):
+		await connect_service()
+
+## Browser only: reload through Cloudflare Access to renew an expired sign-in. A unique URL bypasses the offline cache.
+func sign_in() -> void:
+	status.text = "Opening sign-in. Arrow reloads afterwards; save local work first."
+	JavaScriptBridge.eval("location.assign(location.origin + '/?signin=' + Date.now())")
 
 func _story() -> String:
 	return "" if stories.selected < 0 else str(stories.get_item_metadata(stories.selected))
@@ -205,10 +233,16 @@ func _send(method: HTTPClient.Method, path: String, body: Variant = null) -> Dic
 		_clear_review()
 		review.text = JSON.stringify(response.value, "  ")
 		status.text = "Service request failed (HTTP %s). See details above. Local edits and their base revision are retained." % response.status
+		var error = response.value.get("error")
+		if error is Dictionary and error.get("code") == "signin_required":
+			status.text = str(error.get("message"))
 	return response
 
 func connect_service() -> void:
 	if working or not _configure():
+		return
+	var session = await _send(HTTPClient.METHOD_GET, "/v1/session")
+	if not session.ok:
 		return
 	var response = await _send(HTTPClient.METHOD_GET, "/v1/stories")
 	if response.ok:
@@ -220,7 +254,8 @@ func connect_service() -> void:
 		for item in response.value.get("stories", []):
 			stories.add_item("%s · revision %s" % [item.id, int(item.head)])
 			stories.set_item_metadata(stories.item_count - 1, item.id)
-		status.text = "Connected. Choose a story and load it, or import a story manifest."
+		connected = true
+		status.text = "Connected as %s. Choose a story and load it, or import a story manifest." % session.value.get("actor", "unknown")
 
 func load_story() -> void:
 	if working or _story().is_empty() or not _configure():
@@ -322,7 +357,7 @@ func _load_proposals() -> void:
 		last_cursor = cursor
 		for item in response.value.get("proposals", []):
 			proposals.add_item("%s · r%s · %s" % [item.status, int(item.base_revision), item.message])
-			proposals.set_item_tooltip(proposals.item_count - 1, "%s\n%s" % [item.id, item.message])
+			proposals.set_item_tooltip(proposals.item_count - 1, "%s\n%s\nProposed by %s" % [item.id, item.message, _who(item.get("created_by"))])
 			proposals.set_item_metadata(proposals.item_count - 1, item.id)
 			last_cursor = int(item.sequence)
 		_set_working(false)
@@ -343,8 +378,11 @@ func _show_review(value: Dictionary) -> void:
 		"%s · %s" % [str(value.status).to_upper(), value.id],
 		"Story: %s" % value.story_id,
 		"Base revision %s · current revision %s" % [int(value.base_revision), int(value.current_revision)],
-		"Message: " + str(value.message), "",
-		"Changes (%s)" % value.diff.size(), ""]
+		"Proposed by %s at %s" % [_who(value.get("created_by")), value.created_at],
+		"Message: " + str(value.message), ""]
+	if value.get("applied_revision") != null:
+		lines.insert(4, "Applied as revision %s by %s" % [int(value.applied_revision), _who(value.get("applied_by"))])
+	lines.append_array(["Changes (%s)" % value.diff.size(), ""])
 	for change in value.diff:
 		lines.append(str(change.path))
 		lines.append("Before: " + (JSON.stringify(change.before, "  ") if change.before_exists else "(absent)"))
@@ -358,6 +396,10 @@ func _show_review(value: Dictionary) -> void:
 	review.text = "\n".join(lines)
 	_set_working(false)
 
+## Identity recorded by the service; older revisions and proposals predate it.
+static func _who(actor: Variant) -> String:
+	return str(actor) if actor is String and not actor.is_empty() else "(not recorded)"
+
 func apply_reviewed() -> void:
 	if working or reviewed.get("status") != "ready" or not _configure():
 		return
@@ -365,7 +407,7 @@ func apply_reviewed() -> void:
 	if response.ok:
 		_clear_review()
 		status.text = "Applied revision %s. Local chapters keep their original base. Load the story and open a fresh chapter to continue." % response.value.revision
-		review.text = "Committed %s revision %s\nSHA-256: %s" % [response.value.story_id, int(response.value.revision), response.value.sha256]
+		review.text = "Committed %s revision %s by %s\nSHA-256: %s" % [response.value.story_id, int(response.value.revision), _who(response.value.get("committed_by")), response.value.sha256]
 
 func import_manifest(path: String) -> void:
 	if working or not _configure():

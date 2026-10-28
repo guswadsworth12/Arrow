@@ -92,6 +92,9 @@ try:
             return state
         state = call('state')
         assert state['menu'] and state['token_empty'], state
+        # Token-less connections are only for the PWA's own (Cloudflare Access) origin, not another service.
+        state = call('connect', url=url, token='')
+        assert 'sign-in' in state['status'], state
         state = call('connect', url=url, token='x'*40)
         assert '401' in state['status'], state
         call('connect', url=url, token=token)
