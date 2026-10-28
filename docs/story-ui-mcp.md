@@ -1,4 +1,4 @@
-# Arrow editor and MCP connector — v0.1
+# Arrow editor and MCP connector — v0.2
 
 The desktop Arrow editor and MCP adapter both connect to the shared HTTP story
 service. They use its existing revisions, compiler validation, proposals, review
@@ -52,13 +52,55 @@ never silently rebases local work. A stale proposal attempt returns a conflict
 and leaves local changes intact. Open a fresh chapter and deliberately copy the
 wanted edits when resolving a conflict. There is no automatic merge or live sync.
 
-The editor proposes one full chapter replacement at a time. Shared registry
-names/defaults must agree across chapters: use the MCP registry operations or
-CLI structured edits to change them together. The manifest's chapter inventory,
-resource mappings and external links still use the package JSON or structured
-MCP operations. This phase does not add a visual package/registry designer.
-The existing supported compiler subset still applies. Service UI is desktop
-only; the browser Arrow build does not expose this menu item.
+The chapter editor proposes one full chapter replacement at a time. Shared story
+settings have their own structured batch editor below. The existing supported
+compiler subset still applies. Service UI is desktop only; the browser Arrow
+build does not expose this menu item.
+
+## Shared story settings
+
+Load a story, then choose **Shared story settings…** beside **Open chapter in
+Arrow**. This window edits the loaded revision without changing the open local
+chapter or the shared story until a proposal is applied.
+
+- **Chapters** shows the story's start node, chapter titles and source paths.
+- **Shared characters** changes an existing character's display name in the
+  registry and every mapped chapter together. The window lists affected chapters.
+- **Shared variables** changes an existing authored default across all mappings.
+  True/false uses a checkbox; text uses a text field; numbers use a whole-number
+  field bounded to ±9007199254740991, matching the native compiler. Defaults do
+  not change running game state or existing saves.
+- **Chapter links** selects an existing Jump, destination chapter and node.
+  **Stage chapter link** pairs the Jump's external-target placeholder with its
+  package link in one batch. **Stage local jump** removes any package link and
+  sets the selected local destination in the same batch. Creating new Jump nodes
+  still happens in Arrow's graph editor.
+- **Staged changes** lists the batch and supports removing individual changes or
+  clearing it. Staging a different value for the same definition/Jump replaces
+  that staged change. Returning to the loaded value removes it. Each batch is
+  bounded to the service's 100-operation limit; a Jump conversion uses two.
+
+Enter a review message and choose **Propose staged changes**. The service validates
+all edits together using the existing structured operation API. Its exact diff,
+compiler diagnostics and ready/invalid status appear in the service review
+window, where the normal **Apply reviewed proposal** action commits them. MCP and
+the CLI can read and apply the same proposal. Creating a proposal does not change
+the authoritative revision.
+
+A batch keeps its original service and base revision. Loading newer sources in
+the parent window does not rebase pending edits; trying to submit a stale batch
+returns a conflict and retains it for deliberate resolution. Switching servers
+cannot silently send a batch to a different service. A failed request retains
+staged edits. A successful proposal stores them immutably on the service and
+clears the local batch. Close/reopen preserves staged edits within the current
+Arrow session; **unsubmitted batches are not persisted across application
+restarts**. Propose work you want to retain before quitting.
+
+After applying shared settings, load the story and open a fresh chapter before
+continuing graph edits. Existing local chapters retain their old base revision
+and do not update automatically. Chapter inventory, new registry entries,
+resource mappings and the story entry point still use the package JSON; adding
+or removing chapters/definitions is outside this editor's scope.
 
 ## MCP installation and launch
 
@@ -167,6 +209,10 @@ schemas, resources, authentication, review/apply/restore/history, registry types
 invalid/stale edits, and an MCP → Arrow → MCP editing round trip. Arrow runs in
 an isolated copy and user directory; the suite opens and renders graph nodes,
 checks restart bindings, and scans persisted files for accidental token storage.
+It also tests shared names/defaults across differently mapped chapter IDs, all
+three supported default types, whole-number bounds, atomic external/local Jump
+conversion, frozen staged batches, cross-service refusal, conflicts, and empty
+registries/chapters without Jumps.
 Set `ARROW_CONNECTOR_ARTIFACTS` to a new directory to retain logs; add
 `ARROW_CONNECTOR_VISUAL=1` with an available display for a review screenshot.
 

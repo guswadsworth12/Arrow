@@ -22,6 +22,7 @@ var cursor = 0
 var last_cursor = 0
 var working = false
 var import_picker: FileDialog
+var story_settings: Window
 
 func _ready() -> void:
 	title = "Arrow · Story service"
@@ -59,6 +60,7 @@ func _ready() -> void:
 	chapter_row.add_child(chapters)
 	controls.append(chapters)
 	_button(chapter_row, "Open chapter in Arrow", open_chapter)
+	_button(chapter_row, "Shared story settings…", open_story_settings)
 	message = _field(_row(layout), "Review message for import or editor changes", "")
 	var actions = _row(layout)
 	_button(actions, "Propose current Arrow chapter", propose_current)
@@ -355,3 +357,15 @@ func _select_story(_index: int) -> void:
 	cursor = 0
 	last_cursor = 0
 	_set_working(false)
+
+func open_story_settings() -> void:
+	if working or snapshot.is_empty():
+		status.text = "Load a story before opening shared story settings."
+		return
+	if not _configure():
+		return
+	if not is_instance_valid(story_settings):
+		story_settings = preload("story_settings_window.gd").new()
+		story_settings.service_window = self
+		add_child(story_settings)
+	story_settings.begin(snapshot, client.base_url)
