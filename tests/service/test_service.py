@@ -16,10 +16,18 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 import uuid
 
+from cryptography.hazmat.primitives.asymmetric import rsa
+import jwt
+import uvicorn
+
+from services.story_service import access as cloudflare_access
+from services.story_service.access import AccessVerifier
+from services.story_service.api import create_app
 from services.story_service.client import Client, checkout, load_bundle
 from services.story_service.model import ServiceError, apply_operations, bundle_shape, changes, content_hash, parse_json, source_text
 from services.story_service.store import Store
@@ -104,6 +112,7 @@ class ServiceTests(unittest.TestCase):
         story, _ = self.fresh()
         unauthenticated = Client(self.url, "invalid")
         for method, path, body in [
+            ("GET", "/v1/session", None),
             ("GET", "/v1/stories", None), ("GET", f"/v1/stories/{story}", None),
             ("POST", "/v1/stories", {}), ("GET", f"/v1/stories/{story}/revisions", None),
             ("GET", f"/v1/stories/{story}/revisions/1", None),
@@ -381,6 +390,201 @@ class ServiceTests(unittest.TestCase):
         with sqlite3.connect(database) as connection:
             self.assertEqual(connection.execute("SELECT value FROM unrelated").fetchone()[0], "preserve me")
             self.assertFalse(connection.execute("SELECT name FROM sqlite_master WHERE name='stories'").fetchall())
+
+    def test_access_assertion_is_ignored_without_access_configuration(self):
+        request = urllib.request.Request(self.url + "/v1/session", headers={
+            "Authorization": "Bearer " + self.token, "Cf-Access-Jwt-Assertion": "not.a.token"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            self.assertEqual(parse_json(response.read()), {"actor": "bearer-token", "via": "bearer-token"})
+
+    def test_version_1_database_migrates_and_keeps_history(self):
+        database = self.work / (uuid.uuid4().hex + ".sqlite3")
+        with sqlite3.connect(database) as connection:
+            connection.executescript('''
+                CREATE TABLE stories (id TEXT PRIMARY KEY, head INTEGER NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE revisions (story_id TEXT NOT NULL REFERENCES stories(id), number INTEGER NOT NULL,
+                    bundle TEXT NOT NULL, sha256 TEXT NOT NULL, validation TEXT NOT NULL, created_at TEXT NOT NULL,
+                    message TEXT NOT NULL, proposal_id TEXT, PRIMARY KEY(story_id, number));
+                CREATE TABLE proposals (id TEXT PRIMARY KEY, story_id TEXT NOT NULL REFERENCES stories(id),
+                    base_revision INTEGER NOT NULL, candidate TEXT NOT NULL, sha256 TEXT NOT NULL, validation TEXT NOT NULL,
+                    diff TEXT NOT NULL, operations TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL,
+                    applied_revision INTEGER);
+                CREATE INDEX proposal_story ON proposals(story_id);
+                PRAGMA user_version=1;''')
+            connection.execute("INSERT INTO stories VALUES ('legacy', 1, '2026-10-01T00:00:00+00:00')")
+            connection.execute("INSERT INTO revisions VALUES (?,?,?,?,?,?,?,?)", ("legacy", 1, json.dumps(self.fixture), content_hash(self.fixture),
+                               '{"ok": true, "errors": []}', "2026-10-01T00:00:00+00:00", "Imported before identities", None))
+        store = Store(database, self.validator)
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+        legacy = store.read("legacy")
+        self.assertEqual((legacy["message"], legacy["committed_by"]), ("Imported before identities", None))
+        proposal = store.propose("legacy", 1, [self.edit()], "First recorded edit", "writer@example.com")
+        self.assertEqual(store.apply("legacy", proposal["id"], "reviewer@example.com")["committed_by"], "reviewer@example.com")
+        self.assertEqual([item["committed_by"] for item in store.history("legacy")], [None, "reviewer@example.com"])
+        Store(database, self.validator)  # Reopening an already migrated database changes nothing.
+
+    def test_client_sends_access_service_token_headers(self):
+        received = []
+        class Capture(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.append({key: self.headers.get(key) for key in ("CF-Access-Client-Id", "CF-Access-Client-Secret")})
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{}')
+            def log_message(self, *args):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Capture)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%s" % server.server_port
+            with mock.patch.dict(os.environ, {"ARROW_STORY_ACCESS_CLIENT_ID": "abc123.access", "ARROW_STORY_ACCESS_CLIENT_SECRET": "s3cret"}):
+                Client(url, self.token).request("GET", "/")
+            Client(url, self.token).request("GET", "/")
+            self.assertEqual(received, [{"CF-Access-Client-Id": "abc123.access", "CF-Access-Client-Secret": "s3cret"},
+                                        {"CF-Access-Client-Id": None, "CF-Access-Client-Secret": None}])
+            with mock.patch.dict(os.environ, {"ARROW_STORY_ACCESS_CLIENT_ID": "abc123.access"}):
+                with self.assertRaises(ValueError):
+                    Client(url, self.token)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
+TEAM = "https://arrow-test.cloudflareaccess.com"
+AUDIENCE = "4714c1358e65fe4b408ad6d432a5f878f08194bdb4752441fd56faefa9b2b6f2"
+
+
+class AcceptingValidator:
+    def validate(self, candidate):
+        return {"ok": True, "errors": [], "fingerprint": "test"}
+
+
+class StaticKeys:
+    """Stands in for Cloudflare's published signing keys."""
+    def __init__(self, key):
+        self.key = key
+
+    def get_signing_key_from_jwt(self, assertion):
+        return self
+
+
+class AccessTests(unittest.TestCase):
+    """Cloudflare Access identities with an in-process service and locally signed assertions."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory(prefix="arrow-access-tests-")
+        cls.private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.token = secrets.token_urlsafe(32)
+        cls.fixture = load_bundle(ROOT / "examples/dialogic_bridge/story/guild_story.json")
+        store = Store(Path(cls.temporary.name) / "access.sqlite3", AcceptingValidator())
+        app = create_app(store=store, token=cls.token, access=AccessVerifier(TEAM, AUDIENCE, keys=StaticKeys(cls.private.public_key())))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        cls.url = f"http://127.0.0.1:{port}"
+        cls.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False))
+        cls.thread = threading.Thread(target=cls.server.run, daemon=True)
+        cls.thread.start()
+        deadline = time.monotonic() + 15
+        while not cls.server.started:
+            if time.monotonic() > deadline or not cls.thread.is_alive():
+                raise RuntimeError("Access test service did not start")
+            time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.should_exit = True
+        cls.thread.join(timeout=10)
+        cls.temporary.cleanup()
+
+    def assertion(self, key=None, algorithm="RS256", **claims):
+        issued = int(time.time())
+        values = {"aud": [AUDIENCE], "iss": TEAM, "iat": issued, "exp": issued + 600, "email": "writer@example.com"} | claims
+        return jwt.encode({name: value for name, value in values.items() if value is not None}, key or self.private, algorithm=algorithm)
+
+    def call(self, method, path, value=None, assertion=None, bearer=None):
+        headers = {"Content-Type": "application/json"}
+        if assertion:
+            headers["Cf-Access-Jwt-Assertion"] = assertion
+        if bearer:
+            headers["Authorization"] = "Bearer " + bearer
+        request = urllib.request.Request(self.url + path, method=method, headers=headers,
+                                         data=None if value is None else json.dumps(value).encode())
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, parse_json(response.read())
+        except urllib.error.HTTPError as error:
+            with error:
+                return error.code, parse_json(error.read())
+
+    def import_story(self, assertion):
+        bundle = copy.deepcopy(self.fixture)
+        bundle["package"]["id"] = "access_" + uuid.uuid4().hex[:12]
+        status, created = self.call("POST", "/v1/stories", {"bundle": bundle, "message": "Import"}, assertion=assertion)
+        self.assertEqual(status, 201, created)
+        return created
+
+    def test_signed_in_identities_are_recorded(self):
+        writer, reviewer = self.assertion(), self.assertion(email="reviewer@example.com")
+        self.assertEqual(self.call("GET", "/v1/session", assertion=writer), (200, {"actor": "writer@example.com", "via": "cloudflare-access"}))
+        created = self.import_story(writer)
+        story = created["story_id"]
+        self.assertEqual(created["committed_by"], "writer@example.com")
+        edit = {"op": "update_node", "document": "briefing", "node": "2", "data": {"content": "Signed edit."}}
+        status, proposal = self.call("POST", f"/v1/stories/{story}/proposals",
+                                     {"base_revision": 1, "operations": [edit], "message": "Signed proposal"}, assertion=writer)
+        self.assertEqual((status, proposal["created_by"], proposal["applied_by"]), (201, "writer@example.com", None))
+        status, applied = self.call("POST", f"/v1/stories/{story}/proposals/{proposal['id']}/apply", {}, assertion=reviewer)
+        self.assertEqual((status, applied["revision"], applied["committed_by"]), (200, 2, "reviewer@example.com"))
+        # A repeated apply by someone else keeps the original record.
+        self.call("POST", f"/v1/stories/{story}/proposals/{proposal['id']}/apply", {}, assertion=writer)
+        _, listed = self.call("GET", f"/v1/stories/{story}/proposals", assertion=writer)
+        self.assertEqual([(item["created_by"], item["applied_by"]) for item in listed["proposals"]], [("writer@example.com", "reviewer@example.com")])
+        _, history = self.call("GET", f"/v1/stories/{story}/revisions", assertion=writer)
+        self.assertEqual([item["committed_by"] for item in history["revisions"]], ["writer@example.com", "reviewer@example.com"])
+
+    def test_invalid_assertions_are_rejected(self):
+        other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        issued = int(time.time())
+        for name, assertion in {
+            "expired": self.assertion(iat=issued - 7200, exp=issued - 3600),
+            "other audience": self.assertion(aud=["0" * 64]),
+            "other team": self.assertion(iss="https://other.cloudflareaccess.com"),
+            "other signing key": self.assertion(key=other_key),
+            "symmetric algorithm": self.assertion(key="x" * 64, algorithm="HS256"),
+            "no expiry": self.assertion(exp=None),
+            "no identity": self.assertion(email=None),
+            "malformed": "not.a.token",
+        }.items():
+            with self.subTest(name):
+                status, value = self.call("GET", "/v1/session", assertion=assertion)
+                self.assertEqual((status, value["error"]["code"]), (401, "unauthorized"))
+        # Behind Access the assertion decides; a valid bearer token does not rescue an invalid sign-in.
+        status, _ = self.call("GET", "/v1/session", assertion=self.assertion(aud=["0" * 64]), bearer=self.token)
+        self.assertEqual(status, 401)
+
+    def test_bearer_token_and_service_tokens(self):
+        self.assertEqual(self.call("GET", "/v1/session", bearer=self.token), (200, {"actor": "bearer-token", "via": "bearer-token"}))
+        self.assertEqual(self.call("GET", "/v1/session")[0], 401)
+        service = self.assertion(email=None, common_name="abc123.access")
+        self.assertEqual(self.call("GET", "/v1/session", assertion=service)[1]["actor"], "service-token:abc123.access")
+        self.assertEqual(self.import_story(service)["committed_by"], "service-token:abc123.access")
+
+    def test_access_configuration_is_validated(self):
+        for team, audience in (("http://arrow-test.cloudflareaccess.com", AUDIENCE), (TEAM + "/path", AUDIENCE),
+                               (TEAM, "not an aud tag"), (TEAM, "")):
+            with self.subTest(team=team, audience=audience), self.assertRaises(RuntimeError):
+                AccessVerifier(team, audience, keys=StaticKeys(None))
+        with mock.patch.dict(os.environ, {"ARROW_STORY_ACCESS_TEAM_DOMAIN": TEAM}, clear=False):
+            os.environ.pop("ARROW_STORY_ACCESS_AUD", None)
+            with self.assertRaises(RuntimeError):
+                cloudflare_access.from_environment()
+        with mock.patch.dict(os.environ, {"ARROW_STORY_ACCESS_TEAM_DOMAIN": "", "ARROW_STORY_ACCESS_AUD": ""}):
+            self.assertIsNone(cloudflare_access.from_environment())
 
 
 if __name__ == "__main__":

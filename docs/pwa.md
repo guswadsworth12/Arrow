@@ -52,7 +52,9 @@ behind an HTTPS reverse proxy. The PWA defaults its service URL to the current
 origin; enter your token in **Arrow → Story service… → Connect**. Tokens remain
 in memory and are not written into exports, browser storage or the PWA cache.
 Reloading requires entering the token again. The static editor files are public;
-all story API operations still require a bearer token.
+all story API operations still require a bearer token. Behind
+[Cloudflare Access](cloudflare-access.md) leave the token blank: the window connects
+with your sign-in, and **Sign in…** renews an expired one.
 
 For a PWA hosted on a different origin, configure an exact allowlist in the
 service environment before starting it:

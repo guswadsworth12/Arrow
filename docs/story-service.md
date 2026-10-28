@@ -9,8 +9,9 @@ and does not require this service or Python.
 
 The [Arrow desktop/PWA UI and MCP adapter](story-ui-mcp.md) also connect to this
 backend. The CLI remains available for source checkout and structured edits.
-No hosted ChatGPT connector, public deployment, game adapter, OAuth, user roles,
-or real-time collaborative editor is included.
+Optional [Cloudflare Access sign-in](cloudflare-access.md) identifies who imports,
+proposes and applies each change. No hosted ChatGPT connector, public deployment,
+game adapter, user roles, or real-time collaborative editor is included.
 
 ## Install and run
 
@@ -55,7 +56,9 @@ loopback port. Supply the token through the supervisor's secret environment.
 The CLI permits plain HTTP only for loopback hosts and refuses redirects so it
 cannot forward a bearer token to another destination. A single shared token
 means all authorized clients have the same permissions; this is a private
-workspace service, not a multi-tenant public application.
+workspace service, not a multi-tenant public application. To give people their
+own sign-in and record who made each change, put it behind
+[Cloudflare Access](cloudflare-access.md).
 
 Live processes and environment values do not survive an environment snapshot by
 assumption; restart the service with those settings when needed. No external
@@ -167,7 +170,9 @@ The revision insert, head update and proposal status update share one SQLite
 transaction. A failed write rolls them back together. Restoring revision 1 while
 head is 3 creates revision **4** containing the old sources; revisions 2 and 3
 remain readable. Server timestamps and caller-supplied messages record the edit
-history; shared-token clients do not have verified per-user identities.
+history. Revisions record `committed_by` and proposals `created_by`/`applied_by`:
+a verified Cloudflare Access identity, or `bearer-token` for shared-token clients,
+which have no per-user identity.
 
 ## HTTP contract
 
@@ -178,6 +183,7 @@ revisions when applicable. Route/parameter errors may use standard HTTP errors.
 | Method and route | Request / result |
 | --- | --- |
 | `GET /health` | Public process liveness. |
+| `GET /v1/session` | `{"actor": ..., "via": "cloudflare-access" \| "bearer-token"}` for the current credentials. |
 | `GET /v1/stories` | Story ids, current heads and creation times. |
 | `POST /v1/stories` | `{ "bundle": ..., "message": "..." }`; validated revision 1, HTTP 201. Duplicate id is 409. |
 | `GET /v1/stories/{id}` | Current revision with sources and validation. |

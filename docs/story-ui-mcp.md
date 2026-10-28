@@ -13,7 +13,9 @@ bearer token, then **Connect**. The window also reads `ARROW_STORY_URL` and
 `ARROW_STORY_API_TOKEN` from Arrow's launch environment. Tokens stay in memory;
 they are never written into Arrow projects, configuration or binding metadata.
 Remote URLs require HTTPS; HTTP is accepted only on loopback. Redirects are
-refused. The connector does not need Python inside the editor. See the
+refused. Through [Cloudflare Access](cloudflare-access.md), also set
+`ARROW_STORY_ACCESS_CLIENT_ID` and `ARROW_STORY_ACCESS_CLIENT_SECRET` (desktop and
+MCP); the PWA uses its sign-in instead. The connector does not need Python inside the editor. See the
 [PWA guide](pwa.md) for building, hosting, browser CORS and offline/export support.
 
 For a new story, enter a review message and choose **Import manifest…**, selecting
