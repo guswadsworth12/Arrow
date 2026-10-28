@@ -270,6 +270,62 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
             redirect.server_close()
             thread.join()
 
+    async def test_visual_settings_shared_definitions_links_and_conflicts(self):
+        story = "settings_" + uuid.uuid4().hex[:12]
+        bundle = copy.deepcopy(self.fixture)
+        bundle["package"]["id"] = story
+        for key, kind, initial in (("counter", "num", 7), ("token_name", "str", "jade token")):
+            bundle["package"]["registry"]["variables"][key] = {"name": key, "type": kind, "init": initial}
+            for chapter, spec in bundle["package"]["documents"].items():
+                uid = str((300 if key == "counter" else 301) + (1000 if chapter == "followup" else 0))
+                spec["variables"][uid] = key
+                bundle["documents"][chapter]["resources"]["variables"][uid] = {"name": key, "type": kind, "init": initial}
+        await asyncio.to_thread(self.client.request, "POST", "/v1/stories", {"bundle": bundle, "message": "Non-canon typed settings fixture"})
+        result = await asyncio.to_thread(self.run_ui, story, "", "settings", None, "test_story_settings.gd")
+        original = self.client.request("GET", f"/v1/stories/{story}/revisions/1")
+        self.assertEqual(original["bundle"], bundle)
+        shared = self.client.request("GET", f"/v1/stories/{story}/revisions/2")["bundle"]
+        self.assertEqual(shared["package"]["registry"]["characters"]["rend"]["name"], "Rend of the Lantern Guild")
+        for chapter, spec in shared["package"]["documents"].items():
+            for uid in spec["characters"]:
+                self.assertEqual(shared["documents"][chapter]["resources"]["characters"][uid]["name"], "Rend of the Lantern Guild")
+            for uid, key in spec["variables"].items():
+                actual = shared["documents"][chapter]["resources"]["variables"][uid]["init"]
+                expected = {"request_accepted": True, "counter": -12, "token_name": "copper token"}[key]
+                self.assertIs(type(actual), type(expected))
+                self.assertEqual(actual, expected)
+        local = self.client.request("GET", f"/v1/stories/{story}")
+        self.assertEqual(local["revision"], 3)
+        self.assertEqual(local["bundle"]["package"]["links"], [])
+        self.assertEqual(local["bundle"]["documents"]["briefing"]["resources"]["nodes"]["10"]["data"]["target"], 2)
+        async with self.session(apply=True) as session:
+            proposal = await self.call(session, "read_story_proposal", {"story_id": story, "proposal_id": result["proposal"]})
+            self.assertEqual(proposal["status"], "ready")
+            await self.call(session, "apply_story_proposal", {"story_id": story, "proposal_id": result["proposal"]})
+        head = self.client.request("GET", f"/v1/stories/{story}")
+        self.assertEqual(head["revision"], 4)
+        self.assertEqual(head["bundle"]["documents"]["briefing"]["resources"]["nodes"]["10"]["data"]["target"], -1)
+        self.assertEqual(head["bundle"]["package"]["links"][0]["to"], {"document": "followup", "node": "1"})
+
+    async def test_visual_settings_empty_registries_and_no_jumps(self):
+        story = "empty_" + uuid.uuid4().hex[:12]
+        bundle = copy.deepcopy(self.fixture)
+        bundle["package"]["id"] = story
+        bundle["package"]["registry"] = {}
+        bundle["package"]["links"] = []
+        bundle["package"]["documents"] = {"briefing": {"path": "briefing.arrow"}}
+        document = bundle["documents"]["briefing"]
+        document["resources"]["characters"] = {}
+        document["resources"]["variables"] = {}
+        document["resources"]["nodes"] = {key: value for key, value in document["resources"]["nodes"].items() if key in ("1", "2")}
+        scene = document["resources"]["scenes"]["0"]
+        scene["map"] = {"1": {"offset": [0, 0], "io": [[1, 0, 2, 0]]}, "2": {"offset": [300, 0]}}
+        bundle["documents"] = {"briefing": document}
+        await asyncio.to_thread(self.client.request, "POST", "/v1/stories", {"bundle": bundle, "message": "Non-canon minimal settings fixture"})
+        result = await asyncio.to_thread(self.run_ui, story, "", "empty-settings", None, "test_story_settings.gd")
+        self.assertTrue(result["empty"])
+        self.assertEqual(self.client.request("GET", f"/v1/stories/{story}")["revision"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

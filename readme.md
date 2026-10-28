@@ -117,8 +117,8 @@ Have a Good Time
 
 An initial Arrow-to-Dialogic importer is available in `addons/arrow_dialogic`.
 See [installation, supported nodes, limitations, and tests](docs/dialogic-bridge.md).
-The first milestone targets Dialogic 2.0 Alpha 20; AI and hosted collaboration
-features are planned, not implemented yet.
+The importer targets Dialogic 2.0 Alpha 20. The optional revision service and
+AI editing clients below extend that foundation; public hosting remains separate.
 
 ### Linked chapter packages
 
@@ -126,7 +126,8 @@ This fork can also import a [story package](./docs/story-packages.md) containing
 multiple Arrow files, shared character/variable definitions, explicit chapter
 links, and dependency checks. The [non-canon example](./examples/dialogic_bridge/story/guild_story.json)
 uses different local IDs for the same resources in each chapter. Package manifests
-are edited as JSON; the optional service and MCP clients below share the same sources.
+retain JSON for inventory and mappings; shared names/defaults and Jump routing
+can be edited through the desktop service UI below.
 
 ### Shared story service
 
@@ -139,7 +140,9 @@ A hosted ChatGPT connector remains future work.
 ### Arrow UI and MCP
 
 The desktop **App menu → Story service…** opens service chapters in Arrow,
-proposes graph edits, and reviews/applies shared proposals. The optional
+proposes graph edits, and reviews/applies shared proposals. **Shared story
+settings…** stages character names, typed defaults and chapter Jump destinations
+without hand-editing the manifest. The optional
 [official-SDK MCP adapter](docs/story-ui-mcp.md) reads and proposes edits over the
 same HTTP backend; explicit MCP commits can be enabled when configuring a host.
 Revision conflicts preserve local work. See the guide for launch settings and
