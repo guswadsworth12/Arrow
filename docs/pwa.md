@@ -127,7 +127,9 @@ Offline, the installed editor can reopen saved local chapters and use their
 Arrow/JSON/HTML/CSV exports. The cached loaded story can produce source and
 Dialogic ZIP downloads offline, including after reload. Service imports,
 revision reads, proposal creation and apply require the service to be reachable.
-A failed connection leaves local work intact; old chapter/batch revisions are
+A chapter opened from cached sources retains its original service and revision,
+so offline edits can be proposed after reconnecting. A failed connection leaves
+local work intact; old chapter/batch revisions are
 never silently advanced. Unsubmitted shared-settings batches remain session-only
 as on desktop, so propose them before quitting to persist them on the service.
 

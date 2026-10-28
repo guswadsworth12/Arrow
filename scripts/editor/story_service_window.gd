@@ -126,6 +126,7 @@ func _ready() -> void:
 			if value.get("story_id") is String and value.get("revision") is float and Archive.sources(value.get("bundle")).ok:
 				snapshot = value
 				server.text = cached.value.service
+				client.base_url = cached.value.service
 				stories.add_item("%s · cached revision %s" % [value.story_id, int(value.revision)])
 				stories.set_item_metadata(0, value.story_id)
 				for chapter in value.bundle.documents:

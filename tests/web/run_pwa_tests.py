@@ -176,7 +176,16 @@ try:
         call('reopen_local')
         download('offline-chapter.arrow','chapter_export',format='full-copy')
         assert json.loads((work/'offline-chapter.arrow').read_text())['resources']['nodes']['2']['data']['content']=='Edited in the PWA.'
+        # A fresh chapter opened from cached sources must retain the original
+        # service binding even before credentials are entered after reload.
+        call('open')
+        call('edit_only', content='Authored offline, then proposed after reconnect.')
+        download('offline-new-chapter.arrow','chapter_export',format='full-copy')
         context.set_offline(False)
+        call('connect', url=url, token=token)
+        state = call('propose_current')
+        assert state['proposal_status']=='ready' and 'Authored offline' in state['review'], state
+        assert client.request('GET','/v1/stories/pwa_demo')['revision']==3
         # Redirects must not forward bearer credentials, even on the same host.
         seen=[]
         class Redirect(BaseHTTPRequestHandler):

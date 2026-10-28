@@ -45,6 +45,13 @@ func _command(args) -> void:
 			_choice(panel.chapters, "briefing")
 			panel.open_chapter()
 			await get_tree().process_frame
+		"edit_only":
+			main.Mind.update_resource(2, {"data": {"content": data.content}}, "nodes")
+			main.Mind.reset_project_save_status(false)
+			main.Mind.save_project()
+		"propose_current":
+			panel.message.text = "Propose work authored offline"
+			await panel.propose_current()
 		"edit_propose":
 			main.Mind.update_resource(2, {"data": {"content": "Edited in the PWA."}}, "nodes")
 			main.Mind.reset_project_save_status(false)
