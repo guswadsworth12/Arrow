@@ -1,9 +1,9 @@
 name: Dialogic bridge
 on:
   push:
-    paths: ['addons/arrow_dialogic/**', 'services/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+    paths: ['addons/arrow_dialogic/**', 'services/**', 'scripts/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
   pull_request:
-    paths: ['addons/arrow_dialogic/**', 'services/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+    paths: ['addons/arrow_dialogic/**', 'services/**', 'scripts/**', 'tests/**', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
 permissions:
   contents: read
 jobs:
@@ -29,3 +29,10 @@ jobs:
         env:
           ARROW_STORY_GODOT: /tmp/godot/Godot_v4.6-stable_linux.x86_64
         run: python -m unittest discover -s tests/service -v
+
+      - name: Install optional MCP dependencies
+        run: python -m pip install -r services/story_mcp/requirements.lock
+      - name: MCP stdio and Arrow UI interoperability tests
+        env:
+          ARROW_STORY_GODOT: /tmp/godot/Godot_v4.6-stable_linux.x86_64
+        run: python -m unittest discover -s tests/connectors -v

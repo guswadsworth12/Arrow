@@ -1,0 +1,45 @@
+extends SceneTree
+const Client = preload("res://scripts/editor/story_service_client.gd")
+
+func _initialize() -> void:
+	create_timer(45).timeout.connect(func(): push_error("Native transport timed out"); quit(1))
+	call_deferred("run_tests")
+
+func run_tests() -> void:
+	var client = Client.new()
+	root.add_child(client)
+	assert(client.configure(OS.get_environment("ARROW_STORY_URL"), "x".repeat(40)))
+	var response = await client.request(HTTPClient.METHOD_GET, "/v1/stories")
+	assert(not response.ok and response.status == 401)
+	assert(client.configure(OS.get_environment("ARROW_STORY_URL"), OS.get_environment("ARROW_STORY_API_TOKEN")))
+	response = await client.request(HTTPClient.METHOD_GET, "/v1/stories")
+	assert(response.ok)
+	response = await client.request(HTTPClient.METHOD_GET, "/health")
+	assert(not response.ok)
+	response = await client.request(HTTPClient.METHOD_POST, "/v1/stories", {"large": "x".repeat(8 * 1024 * 1024)})
+	assert(not response.ok and response.status == 413)
+	assert(client.configure(OS.get_environment("ARROW_TEST_REDIRECT_URL"), OS.get_environment("ARROW_STORY_API_TOKEN")))
+	response = await client.request(HTTPClient.METHOD_GET, "/v1/stories")
+	assert(not response.ok)
+	for bad_path in ["../briefing.arrow", "/etc/passwd.json", "res://secret.arrow", "nested/../secret.arrow", "file.txt", "nested\\secret.arrow"]:
+		var manifest = {"documents": {"chapter": {"path": bad_path}}}
+		var file = FileAccess.open("user://bad-manifest.json", FileAccess.WRITE)
+		file.store_string(JSON.stringify(manifest))
+		file.close()
+		assert(not Client.read_bundle("user://bad-manifest.json").ok)
+	var local = ProjectSettings.globalize_path("user://")
+	DirAccess.make_dir_recursive_absolute(local.path_join("linked"))
+	var file = FileAccess.open("user://secret.arrow", FileAccess.WRITE)
+	file.store_string("{}")
+	file.close()
+	if OS.get_name() == "Linux":
+		assert(DirAccess.open(local).create_link(local.path_join("secret.arrow"), local.path_join("linked/chapter.arrow")) == OK)
+		file = FileAccess.open("user://bad-manifest.json", FileAccess.WRITE)
+		file.store_string(JSON.stringify({"documents": {"chapter": {"path": "linked/chapter.arrow"}}}))
+		file.close()
+		assert(not Client.read_bundle("user://bad-manifest.json").ok)
+	file = FileAccess.open(OS.get_environment("ARROW_TEST_OUTPUT"), FileAccess.WRITE)
+	file.store_string('{"passed":true}')
+	file.close()
+	print("Arrow service UI: PASS — authentication, redirect isolation, upload limit and local path guards")
+	quit(0)

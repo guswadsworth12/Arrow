@@ -7,9 +7,9 @@ Godot package compiler validates imports and proposals; it is run again before
 every new commit. The existing Arrow-to-Dialogic addon remains native GDScript
 and does not require this service or Python.
 
-This is an HTTP backend and CLI, not an integrated Arrow service browser or MCP
-server. Arrow edits exported chapter files; the CLI proposes those edits back to
-the service. No ChatGPT plugin, public deployment, game adapter, OAuth, user roles,
+The [Arrow desktop UI and MCP adapter](story-ui-mcp.md) also connect to this
+backend. The CLI remains available for source checkout and structured edits.
+No hosted ChatGPT connector, public deployment, game adapter, OAuth, user roles,
 or real-time collaborative editor is included.
 
 ## Install and run
@@ -235,5 +235,5 @@ rollback after an injected database failure, replay-safe apply, restoration,
 restart durability, backup integrity, Arrow source round-trips, authentication,
 request/path limits and malformed data. The existing bridge/package checks remain
 separate. Actual public hosting, load testing and the Jade Lantern game are not
-validated here. Next integrations are an Arrow service connector and structured
-MCP access over these same revision/proposal operations.
+validated here. The [Arrow UI and MCP integration guide](story-ui-mcp.md) describes
+the clients that use these same revision/proposal operations.

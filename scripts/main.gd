@@ -169,3 +169,13 @@ func _notification(what) -> void:
 func _input(event:InputEvent) -> void:
 	var _handled = Mind.handle_shortcuts(event)
 	pass
+
+# Optional shared source connector, created on demand in the desktop editor.
+var StoryService: Window
+
+func open_story_service() -> void:
+	if not is_instance_valid(StoryService):
+		StoryService = preload("res://scripts/editor/story_service_window.gd").new()
+		StoryService.Main = self
+		add_child(StoryService)
+	StoryService.popup_centered()
