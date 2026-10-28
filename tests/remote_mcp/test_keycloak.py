@@ -1,5 +1,6 @@
 """Opt-in real Keycloak + official OAuth client PKCE + authenticated MCP integration."""
 import asyncio
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from urllib.parse import parse_qs, urlsplit, urlencode
@@ -47,7 +49,16 @@ class KeycloakTests(unittest.IsolatedAsyncioTestCase):
         cls.port=port();cls.mcp_port=port()
         cls.issuer=f'http://127.0.0.1:{cls.port}/realms/arrow'
         cls.mcp=f'http://127.0.0.1:{cls.mcp_port}/mcp'
-        cls.redirect=f'http://127.0.0.1:{port()}/callback'
+        class Callback(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type','text/plain; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(b'Test OAuth callback received')
+            def log_message(self,*args):pass
+        cls.callback_server=ThreadingHTTPServer(('127.0.0.1',0),Callback)
+        threading.Thread(target=cls.callback_server.serve_forever,daemon=True).start()
+        cls.redirect=f'http://127.0.0.1:{cls.callback_server.server_port}/callback'
         cls.password=secrets.token_urlsafe(32)
         realm=deploy.realm_config(cls.mcp,[cls.redirect])
         realm['sslRequired']='none'  # Loopback test container; production import requires HTTPS.
@@ -96,6 +107,7 @@ class KeycloakTests(unittest.IsolatedAsyncioTestCase):
         except subprocess.TimeoutExpired:cls.process.kill();cls.process.wait()
         cls.log.close()
         subprocess.run(['docker','stop',cls.container],capture_output=True,timeout=30)
+        cls.callback_server.shutdown();cls.callback_server.server_close()
         cls.temp.cleanup()
 
     async def authorize(self,url,username):
@@ -103,7 +115,6 @@ class KeycloakTests(unittest.IsolatedAsyncioTestCase):
             browser=await playwright.chromium.launch(executable_path=os.environ.get('ARROW_TEST_CHROMIUM'),
                 headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
             page=await browser.new_page()
-            await page.route(self.redirect+'**',lambda route:route.fulfill(status=200,body='Test OAuth callback received'))
             await page.goto(url,wait_until='domcontentloaded')
             await page.locator('[name="username"]').fill(username)
             await page.locator('[name="password"]').fill(self.password)
