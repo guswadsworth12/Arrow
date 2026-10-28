@@ -13,6 +13,7 @@ extends MenuButton
 
 var _MENU_ITEMS = [
 	"PREFERENCES",
+	"STORY_SERVICE",
 	null,
 	"FULLSCREEN",
 	"ALWAYS_ON_TOP",
@@ -27,6 +28,7 @@ var _MENU_ITEMS = [
 
 var _MENU_ITEMS_DATA = [
 	{ "text": "Preferences" },
+	{ "text": "Story service…", "html5": false },
 	null,
 	{ "text": "Fullscreen (F11)", "text_toggled": "Exit Fullscreen (F11)" },
 	{ "text": "Stay Above", "text_toggled": "Leave Above", "html5": false },
@@ -110,6 +112,8 @@ func _on_self_popup_item_id_pressed(id:int) -> void:
 	match id:
 		_ID.PREFERENCES:
 			Main.UI.call_deferred("set_panel_visibility", "preferences", true)
+		_ID.STORY_SERVICE:
+			Main.call_deferred("open_story_service")
 		_ID.FULLSCREEN:
 			Main.UI.call_deferred("toggle_fullscreen")
 		_ID.ALWAYS_ON_TOP:

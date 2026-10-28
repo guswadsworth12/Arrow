@@ -1,0 +1,2 @@
+-r ../story_service/requirements.txt
+mcp==1.30.0

@@ -156,5 +156,7 @@ python3 tests/run_bridge_tests.py --godot godot --dialogic /path/to/pinned-dialo
 Arrow currently edits each chapter's graph; the registry and cross-chapter link
 table are edited as JSON. Arrow's built-in console cannot follow the external
 jump placeholders; package playback is validated in Dialogic. An integrated story
-registry/link editor, a Jade Lantern game adapter, hosted revisions, structured
-MCP operations, AI change review, and a ChatGPT interface remain later work.
+registry/link editor, a Jade Lantern game adapter, public hosting and a hosted
+ChatGPT interface remain later work. The optional [revision service](story-service.md)
+and [Arrow UI/MCP clients](story-ui-mcp.md) now provide shared persistence,
+structured editing and proposal review over these same story sources.
