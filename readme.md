@@ -47,22 +47,22 @@ Following links are to the *fairly stable most recent* versions:
 
 ## Web App
 
-Arrow is also available as a [Progressive Web App][web-app].
+This fork's installable [PWA](docs/pwa.md) includes the shared story service UI,
+chapter graphs, shared definitions/links, proposal review/apply, and all exports.
+Download the **Arrow-PWA** artifact from this fork's
+[build workflow](https://github.com/guswadsworth12/Arrow/actions/workflows/dialogic-bridge.yml),
+or build it with `tools/export_pwa.py`. The guide covers self-hosting and service
+connections.
 
-The app tries to provide the core features on a par with the most recent downloadable releases.  
-The most critical difference is that ***it stores project data and configurations in your browser***.  
-Additional import & export conveniences are available to ease working with file-system of your device.
+Projects/configuration are stored in the browser. Native Arrow, play-ready JSON,
+standalone HTML, CSV, story-source ZIP and compiled Dialogic ZIP downloads provide
+portable copies. Cached local chapters and loaded stories can export offline;
+shared revisions/proposals use the same backend as desktop and MCP clients.
 
-> **Note!**  
-> Due to the nature of browsers, **certain features may be limited or not available in web app** versions.  
-> We *highly recommend prioritizing use of Arrow for desktop (OS platforms)* whenever possible.  
-> Currently known limited features on browsers include:
-> loading fonts from the user's system (affecting Unicode support), window management conveniences and incremental exports.  
-
-> PWA version requires your browser to have `WebGl` and `Canvas` element support,
-> available `Web-Storage`, and `Java-Script` enabled (which any *modern browser* does by default).
-
-> The experience is optimized for medium-large screens.
+A modern browser needs WebGL 2, Canvas, JavaScript and browser storage enabled.
+The UI is optimized for medium-large screens. Browser file selection/downloads
+replace native filesystem dialogs, and operating-system window controls remain
+platform-specific. Upstream Arrow's [original PWA demo][web-app] is also available.
 
 
 ## Runtime & Integration
@@ -139,7 +139,7 @@ A hosted ChatGPT connector remains future work.
 
 ### Arrow UI and MCP
 
-The desktop **App menu → Story service…** opens service chapters in Arrow,
+The desktop and PWA **App menu → Story service…** opens service chapters in Arrow,
 proposes graph edits, and reviews/applies shared proposals. **Shared story
 settings…** stages character names, typed defaults and chapter Jump destinations
 without hand-editing the manifest. The optional
@@ -147,3 +147,11 @@ without hand-editing the manifest. The optional
 same HTTP backend; explicit MCP commits can be enabled when configuring a host.
 Revision conflicts preserve local work. See the guide for launch settings and
 the tested Arrow/MCP round trip.
+
+### PWA build and exports
+
+The [self-contained PWA](docs/pwa.md) includes shared story editing/review and
+browser package import, with Arrow/JSON/HTML/CSV, source ZIP and Dialogic ZIP
+downloads. Cached chapters/stories can export offline. Build with
+`tools/export_pwa.py`; the service can host the result at `/app/`. GitHub Actions
+validates real browser workflows and uploads a deployable Arrow-PWA artifact.

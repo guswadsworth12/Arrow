@@ -54,11 +54,15 @@ with (contextlib.nullcontext(str(args.work_dir)) if args.work_dir else tempfile.
         if result.returncode or re.search(r'(?m)^(SCRIPT ERROR:|ERROR:)', output) or (expect and expect not in output):
             print(output[-18000:])
             raise SystemExit(result.returncode or 1)
-        print('\n'.join(line for line in output.splitlines() if 'Bridge compiler:' in line or 'Dialogic Alpha' in line or 'Arrow example:' in line or 'Story package' in line))
+        print('\n'.join(line for line in output.splitlines() if 'Bridge compiler:' in line or 'Dialogic Alpha' in line or 'Arrow example:' in line or 'Story package' in line or 'Story archives:' in line))
     run('--script', 'res://test_compiler.gd', expect='Bridge compiler:')
     shutil.copytree(root / 'examples/dialogic_bridge/story', work / 'story')
     shutil.copy(root / 'tests/bridge/test_story.gd', work / 'test_story.gd')
     run('--script', 'res://test_story.gd', expect='Story package:')
+    (work / 'scripts/editor').mkdir(parents=True, exist_ok=True)
+    shutil.copy(root / 'scripts/editor/story_archive.gd', work / 'scripts/editor/story_archive.gd')
+    shutil.copy(root / 'tests/web/test_archives.gd', work / 'test_archives.gd')
+    run('--script', 'res://test_archives.gd', expect='Story archives:')
     if args.arrow:
         arrow = work / 'arrow-editor'
         shutil.copytree(root, arrow, ignore=shutil.ignore_patterns('.git', '.godot', '.arrow.config', '*.log', '__pycache__'))

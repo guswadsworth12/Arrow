@@ -7,6 +7,15 @@ var errors: Array[String] = []
 var identities: Dictionary = {}
 
 func compile(path: String, package: Dictionary, source_text: String, character_bindings: Dictionary = {}) -> Dictionary:
+	return _compile(path, package, source_text, character_bindings, {})
+
+func compile_sources(path: String, package: Dictionary, source_text: String, documents: Dictionary, character_bindings: Dictionary = {}) -> Dictionary:
+	errors.clear()
+	if not package.get("documents") is Dictionary or documents.size() != package.documents.size() or not documents.keys().all(func(key): return package.documents.has(key) and documents[key] is String):
+		return _failure("Supplied chapter texts must exactly match the document inventory")
+	return _compile(path, package, source_text, character_bindings, documents)
+
+func _compile(path: String, package: Dictionary, source_text: String, character_bindings: Dictionary, supplied: Dictionary) -> Dictionary:
 	errors.clear()
 	identities.clear()
 	if not path.begins_with("res://"):
@@ -60,10 +69,10 @@ func compile(path: String, package: Dictionary, source_text: String, character_b
 		if not _name(chapter) or not spec is Dictionary or not spec.get("path") is String:
 			return _failure("Invalid document entry %s" % chapter)
 		var chapter_path = _resolve(path, spec.path)
-		if chapter_path.is_empty() or chapter_path.to_lower() in paths or not FileAccess.file_exists(chapter_path):
+		if chapter_path.is_empty() or chapter_path.to_lower() in paths or (supplied.is_empty() and not FileAccess.file_exists(chapter_path)):
 			return _failure("Chapter %s needs a unique, existing path beneath the story manifest directory" % chapter)
 		paths.append(chapter_path.to_lower())
-		var text = FileAccess.get_file_as_string(chapter_path)
+		var text: String = supplied[chapter] if not supplied.is_empty() else FileAccess.get_file_as_string(chapter_path)
 		var parsed = JSON.new()
 		if parsed.parse(text) != OK or not parsed.data is Dictionary:
 			return _failure("Chapter %s is not valid Arrow JSON: %s" % [chapter, parsed.get_error_message()])

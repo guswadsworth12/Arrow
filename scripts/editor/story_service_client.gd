@@ -4,6 +4,13 @@ const MAX_UPLOAD = 8 * 1024 * 1024
 var base_url = ""
 var bearer = ""
 var busy = false
+signal web_response(status: int, text: String)
+var _web_callback
+
+func _ready() -> void:
+	if Html5Helpers.Utils.is_browser():
+		JavaScriptBridge.eval(FileAccess.get_file_as_string("res://web/bridge.js"), true)
+		_web_callback = JavaScriptBridge.create_callback(func(args): web_response.emit(int(args[0]), str(args[1])))
 
 static func valid_url(value: String) -> bool:
 	var pattern = RegEx.new()
@@ -31,6 +38,15 @@ func request(method: HTTPClient.Method, path: String, body: Variant = null) -> D
 	if payload.to_utf8_buffer().size() > MAX_UPLOAD:
 		return {"ok": false, "status": 413, "value": {"error": {"message": "Upload exceeds 8 MiB."}}}
 	busy = true
+	if Html5Helpers.Utils.is_browser():
+		JavaScriptBridge.get_interface("ArrowStoryWeb").request(base_url + path, "GET" if method == HTTPClient.METHOD_GET else "POST", bearer, payload, _web_callback)
+		var received = await web_response
+		busy = false
+		var value = JSON.parse_string(received[1])
+		if not value is Dictionary:
+			value = {"error": {"message": "Service returned invalid JSON."}}
+			return {"ok": false, "status": received[0], "value": value}
+		return {"ok": received[0] >= 200 and received[0] < 300, "status": received[0], "value": value}
 	var http = HTTPRequest.new()
 	http.max_redirects = 0
 	http.timeout = 90

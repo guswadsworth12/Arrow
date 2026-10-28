@@ -7,7 +7,7 @@ Godot package compiler validates imports and proposals; it is run again before
 every new commit. The existing Arrow-to-Dialogic addon remains native GDScript
 and does not require this service or Python.
 
-The [Arrow desktop UI and MCP adapter](story-ui-mcp.md) also connect to this
+The [Arrow desktop/PWA UI and MCP adapter](story-ui-mcp.md) also connect to this
 backend. The CLI remains available for source checkout and structured edits.
 No hosted ChatGPT connector, public deployment, game adapter, OAuth, user roles,
 or real-time collaborative editor is included.
@@ -38,11 +38,14 @@ export ARROW_STORY_GODOT=/usr/local/bin/godot
 /tmp/arrow-story-venv/bin/python -m services.story_service serve
 ```
 
+The service can also host an exported PWA at `/app/` using `serve --web-root PATH`.
+Separate-origin PWAs use the exact `ARROW_STORY_ALLOWED_ORIGINS` JSON allowlist.
+See [PWA hosting and exports](pwa.md) for configuration.
+
 The default bind is `127.0.0.1:8765`. Every `/v1/` operation requires
 `Authorization: Bearer <token>`. Startup rejects missing tokens and tokens shorter
 than 32 printable ASCII characters. `GET /health` is public liveness only; an
-actual validated import demonstrates compiler and database readiness. No browser
-UI is served. Use `--host`, `--port`, or `--workers` after `serve` to configure the
+actual validated import demonstrates compiler and database readiness. Browser UI is served only when an exported PWA root is configured. Use `--host`, `--port`, or `--workers` after `serve` to configure the
 ASGI process. Run commands from the repository root so the source modules and
 native addon can be located.
 
