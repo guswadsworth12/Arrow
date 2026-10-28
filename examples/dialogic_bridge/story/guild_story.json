@@ -1,0 +1,56 @@
+{
+  "format": "arrow-story",
+  "version": 1,
+  "id": "jade_lantern_demo",
+  "title": "Guild request \u2014 linked chapters (non-canon)",
+  "entry": {
+    "document": "briefing",
+    "node": "1"
+  },
+  "registry": {
+    "characters": {
+      "rend": {
+        "name": "Rend"
+      }
+    },
+    "variables": {
+      "request_accepted": {
+        "name": "request_accepted",
+        "type": "bool",
+        "init": false
+      }
+    }
+  },
+  "documents": {
+    "briefing": {
+      "path": "briefing.arrow",
+      "characters": {
+        "100": "rend"
+      },
+      "variables": {
+        "200": "request_accepted"
+      }
+    },
+    "followup": {
+      "path": "followup.arrow",
+      "characters": {
+        "900": "rend"
+      },
+      "variables": {
+        "901": "request_accepted"
+      }
+    }
+  },
+  "links": [
+    {
+      "from": {
+        "document": "briefing",
+        "node": "10"
+      },
+      "to": {
+        "document": "followup",
+        "node": "1"
+      }
+    }
+  ]
+}

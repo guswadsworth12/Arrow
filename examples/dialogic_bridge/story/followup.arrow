@@ -1,0 +1,181 @@
+{
+  "title": "Follow-up \u2014 chapter package test (non-canon)",
+  "entry": 1,
+  "meta": {
+    "chapter": 1,
+    "authors": {
+      "0": [
+        "Bridge example",
+        201
+      ]
+    },
+    "editor": "3.1.0",
+    "offline": true,
+    "remote": {}
+  },
+  "resources": {
+    "nodes": {
+      "1": {
+        "type": "entry",
+        "name": "followup_entry",
+        "data": {
+          "plaque": "Follow-up"
+        }
+      },
+      "2": {
+        "type": "monolog",
+        "name": "chapter_greeting",
+        "data": {
+          "character": 900,
+          "monolog": "A new chapter begins.",
+          "rect": [
+            260,
+            160
+          ]
+        }
+      },
+      "3": {
+        "type": "condition",
+        "name": "shared_acceptance",
+        "data": {
+          "variable": 901,
+          "operator": "eq",
+          "with": [
+            0,
+            true
+          ],
+          "rect": [
+            260,
+            160
+          ]
+        }
+      },
+      "4": {
+        "type": "content",
+        "name": "carried_acceptance",
+        "data": {
+          "content": "Your accepted request carries into this chapter."
+        }
+      },
+      "5": {
+        "type": "content",
+        "name": "still_undecided",
+        "data": {
+          "content": "The request is still undecided in this chapter."
+        }
+      },
+      "6": {
+        "type": "content",
+        "name": "outside",
+        "data": {
+          "content": "Outside, Valenne carries on around you."
+        }
+      }
+    },
+    "scenes": {
+      "0": {
+        "name": "Follow-up",
+        "entry": 1,
+        "map": {
+          "1": {
+            "offset": [
+              40,
+              180
+            ],
+            "io": [
+              [
+                1,
+                0,
+                2,
+                0
+              ]
+            ]
+          },
+          "2": {
+            "offset": [
+              260,
+              180
+            ],
+            "io": [
+              [
+                2,
+                0,
+                3,
+                0
+              ]
+            ]
+          },
+          "3": {
+            "offset": [
+              560,
+              180
+            ],
+            "io": [
+              [
+                3,
+                0,
+                5,
+                0
+              ],
+              [
+                3,
+                1,
+                4,
+                0
+              ]
+            ]
+          },
+          "4": {
+            "offset": [
+              900,
+              30
+            ],
+            "io": [
+              [
+                4,
+                0,
+                6,
+                0
+              ]
+            ]
+          },
+          "5": {
+            "offset": [
+              900,
+              410
+            ],
+            "io": [
+              [
+                5,
+                0,
+                6,
+                0
+              ]
+            ]
+          },
+          "6": {
+            "offset": [
+              1200,
+              180
+            ],
+            "io": []
+          }
+        }
+      }
+    },
+    "characters": {
+      "900": {
+        "name": "Rend",
+        "color": "84cba0",
+        "tags": {}
+      }
+    },
+    "variables": {
+      "901": {
+        "name": "request_accepted",
+        "type": "bool",
+        "init": false
+      }
+    }
+  }
+}

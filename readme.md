@@ -112,3 +112,35 @@ Have a Good Time
 [arrow-screenshot]: https://mhgolkar.github.io/Arrow/media/overview.v3.png
 <!-- External -->
 [Bow]: https://github.com/mhgolkar/Bow
+
+## This fork: Godot / Dialogic integration
+
+An initial Arrow-to-Dialogic importer is available in `addons/arrow_dialogic`.
+See [installation, supported nodes, limitations, and tests](docs/dialogic-bridge.md).
+The first milestone targets Dialogic 2.0 Alpha 20; AI and hosted collaboration
+features are planned, not implemented yet.
+
+### Linked chapter packages
+
+This fork can also import a [story package](./docs/story-packages.md) containing
+multiple Arrow files, shared character/variable definitions, explicit chapter
+links, and dependency checks. The [non-canon example](./examples/dialogic_bridge/story/guild_story.json)
+uses different local IDs for the same resources in each chapter. Package manifests
+are edited as JSON; the optional service and MCP clients below share the same sources.
+
+### Shared story service
+
+An optional [HTTP story service and CLI](docs/story-service.md) now provide SQLite
+revision history, compiler-validated edit proposals, conflict detection and
+reversible commits. It uses the same package compiler as the Godot addon. Arrow
+can exchange source checkouts through the CLI or use the desktop UI below.
+A hosted ChatGPT connector remains future work.
+
+### Arrow UI and MCP
+
+The desktop **App menu → Story service…** opens service chapters in Arrow,
+proposes graph edits, and reviews/applies shared proposals. The optional
+[official-SDK MCP adapter](docs/story-ui-mcp.md) reads and proposes edits over the
+same HTTP backend; explicit MCP commits can be enabled when configuring a host.
+Revision conflicts preserve local work. See the guide for launch settings and
+the tested Arrow/MCP round trip.
