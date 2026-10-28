@@ -17,6 +17,7 @@ def main():
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--workers", type=int, default=1)
+    serve.add_argument("--web-root", type=Path, help="Serve an exported Arrow PWA at /app/")
     backup = sub.add_parser("backup")
     backup.add_argument("database", type=Path)
     backup.add_argument("destination", type=Path)
@@ -48,6 +49,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "serve":
+            if args.web_root:
+                os.environ["ARROW_STORY_WEB_ROOT"] = str(args.web_root.resolve())
             import uvicorn
             uvicorn.run("services.story_service.api:create_app", factory=True, host=args.host, port=args.port,
                         workers=args.workers, access_log=False)

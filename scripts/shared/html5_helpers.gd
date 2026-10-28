@@ -88,3 +88,38 @@ class Reader:
 			printerr("HTML5 FS helpers read in context other than browser!")
 		pass
 	
+
+# Binary package picker. Browser paths never become filesystem paths.
+class BinaryReader:
+	var _input
+	var _reader
+	var _change
+	var _loaded
+	var _cancel
+	var _callback: Callable
+	var _filename = ""
+	func _init() -> void:
+		if not Utils.is_browser():
+			return
+		_input = Utils.document().createElement("input")
+		_input.type = "file"
+		_input.accept = ".zip,.json"
+		_reader = JavaScriptBridge.create_object("FileReader")
+		_loaded = JavaScriptBridge.create_callback(func(args): _callback.call_deferred(JavaScriptBridge.js_buffer_to_packed_byte_array(args[0].target.result), _filename))
+		_reader.onload = _loaded
+		_cancel = JavaScriptBridge.create_callback(func(_args): _callback.call_deferred(PackedByteArray(), ""))
+		_reader.onerror = _cancel
+		_input.oncancel = _cancel
+		_change = JavaScriptBridge.create_callback(func(args):
+			var files = args[0].target.files
+			if files.length > 0:
+				_filename = str(files[0].name)
+				if files[0].size > 32 * 1024 * 1024:
+					_callback.call_deferred(PackedByteArray(), _filename)
+				else:
+					_reader.readAsArrayBuffer(files[0]))
+		_input.onchange = _change
+	func read_then(callback: Callable) -> void:
+		_callback = callback
+		_input.value = ""
+		_input.click()

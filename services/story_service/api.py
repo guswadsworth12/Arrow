@@ -4,6 +4,10 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+from urllib.parse import urlsplit
+
+from starlette.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
@@ -51,6 +55,31 @@ class BodyLimit:
             await response(scope, receive, send)
 
 
+class NoApiCache:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        async def no_cache(message):
+            if message["type"] == "http.response.start" and scope.get("path", "").startswith("/v1/"):
+                message["headers"] = [(key, value) for key, value in message.get("headers", []) if key.lower() != b"cache-control"] + [(b"cache-control", b"no-store")]
+            await send(message)
+        return await self.app(scope, receive, no_cache)
+
+
+def browser_origins() -> list[str]:
+    values = parse_json(os.environ.get("ARROW_STORY_ALLOWED_ORIGINS", "[]"))
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise RuntimeError("ARROW_STORY_ALLOWED_ORIGINS must be a JSON array of exact HTTP(S) origins")
+    for value in values:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password
+                or parsed.path or parsed.query or parsed.fragment or "*" in value
+                or (parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"))):
+            raise RuntimeError("Browser origins must be exact HTTPS origins (HTTP is allowed on loopback)")
+    return values
+
+
 def create_app(*, store: Store | None = None, token: str | None = None, max_body: int = 8 * 1024 * 1024) -> FastAPI:
     token = token if token is not None else os.environ.get("ARROW_STORY_API_TOKEN", "")
     if not isinstance(token, str) or len(token) < 32 or any(not 33 <= ord(char) <= 126 for char in token):
@@ -61,6 +90,9 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     app = FastAPI(title="Arrow Story Service", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
     app.add_middleware(BodyLimit, limit=max_body)
+    app.add_middleware(NoApiCache)
+    app.add_middleware(CORSMiddleware, allow_origins=browser_origins(), allow_methods=["GET", "POST"],
+                       allow_headers=["Authorization", "Content-Type"], allow_credentials=False)
 
     async def authorize(authorization: str | None = Header(default=None)):
         if authorization is None or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:].encode(), token.encode()):
@@ -130,4 +162,10 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
         from starlette.concurrency import run_in_threadpool
         return await run_in_threadpool(store.apply, story_id, proposal_id)
 
+    web_root = os.environ.get("ARROW_STORY_WEB_ROOT")
+    if web_root:
+        path = Path(web_root).resolve()
+        if not (path / "index.html").is_file():
+            raise RuntimeError("ARROW_STORY_WEB_ROOT must contain an exported PWA index.html")
+        app.mount("/app", StaticFiles(directory=path, html=True), name="arrow-pwa")
     return app

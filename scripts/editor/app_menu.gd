@@ -28,7 +28,7 @@ var _MENU_ITEMS = [
 
 var _MENU_ITEMS_DATA = [
 	{ "text": "Preferences" },
-	{ "text": "Story service…", "html5": false },
+	{ "text": "Story service…" },
 	null,
 	{ "text": "Fullscreen (F11)", "text_toggled": "Exit Fullscreen (F11)" },
 	{ "text": "Stay Above", "text_toggled": "Leave Above", "html5": false },

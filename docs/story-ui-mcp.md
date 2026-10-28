@@ -1,11 +1,11 @@
-# Arrow editor and MCP connector — v0.2
+# Arrow editor and MCP connector — v0.3
 
-The desktop Arrow editor and MCP adapter both connect to the shared HTTP story
+The desktop/PWA Arrow editor and MCP adapter connect to the shared HTTP story
 service. They use its existing revisions, compiler validation, proposals, review
 diffs and explicit apply endpoint. Neither client has direct database access.
 Godot still owns dialogue playback and runtime state.
 
-## Arrow desktop UI
+## Arrow UI (desktop and PWA)
 
 Start the service using [story-service.md](story-service.md), then run this Arrow
 fork with Godot. Open **App menu → Story service…**. Set the service URL and
@@ -13,7 +13,8 @@ bearer token, then **Connect**. The window also reads `ARROW_STORY_URL` and
 `ARROW_STORY_API_TOKEN` from Arrow's launch environment. Tokens stay in memory;
 they are never written into Arrow projects, configuration or binding metadata.
 Remote URLs require HTTPS; HTTP is accepted only on loopback. Redirects are
-refused. The native connector does not need Python inside the editor.
+refused. The connector does not need Python inside the editor. See the
+[PWA guide](pwa.md) for building, hosting, browser CORS and offline/export support.
 
 For a new story, enter a review message and choose **Import manifest…**, selecting
 an existing `arrow-story` package `.json` manifest. The service validates the
@@ -54,8 +55,9 @@ wanted edits when resolving a conflict. There is no automatic merge or live sync
 
 The chapter editor proposes one full chapter replacement at a time. Shared story
 settings have their own structured batch editor below. The existing supported
-compiler subset still applies. Service UI is desktop only; the browser Arrow
-build does not expose this menu item.
+compiler subset still applies. Both desktop and PWA expose this workflow. The PWA
+imports ZIP/bundle files through the browser and downloads source/Dialogic ZIPs;
+existing chapter Arrow/JSON/HTML/CSV exports remain available.
 
 ## Shared story settings
 

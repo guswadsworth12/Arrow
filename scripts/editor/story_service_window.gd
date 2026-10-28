@@ -1,7 +1,9 @@
 extends Window
 ## Shared story review UI; Arrow project saves stay local until an explicit apply.
 const Client = preload("story_service_client.gd")
+const Archive = preload("story_archive.gd")
 const BINDINGS_PATH = "user://story-service-bindings.json"
+const SNAPSHOT_PATH = "user://story-service-loaded.json"
 var Main
 var client
 var server: LineEdit
@@ -23,6 +25,9 @@ var last_cursor = 0
 var working = false
 var import_picker: FileDialog
 var story_settings: Window
+var browser_reader
+var export_picker: FileDialog
+var export_bytes = PackedByteArray()
 
 func _ready() -> void:
 	title = "Arrow · Story service"
@@ -42,7 +47,7 @@ func _ready() -> void:
 	var connection = _row(layout)
 	server = _field(connection, "Service URL", OS.get_environment("ARROW_STORY_URL"))
 	if server.text.is_empty():
-		server.text = "http://127.0.0.1:8765"
+		server.text = str(JavaScriptBridge.get_interface("location").origin) if Html5Helpers.Utils.is_browser() else "http://127.0.0.1:8765"
 	token = _field(connection, "Bearer token (session only)", OS.get_environment("ARROW_STORY_API_TOKEN"))
 	token.secret = true
 	_button(connection, "Connect", connect_service)
@@ -53,7 +58,7 @@ func _ready() -> void:
 	controls.append(stories)
 	stories.item_selected.connect(_select_story)
 	_button(story_row, "Load story", load_story)
-	_button(story_row, "Import manifest…", func(): import_picker.popup_centered_ratio(0.7))
+	_button(story_row, "Import story ZIP…" if Html5Helpers.Utils.is_browser() else "Import manifest / ZIP…", choose_import)
 	var chapter_row = _row(layout)
 	chapters = OptionButton.new()
 	chapters.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -62,6 +67,9 @@ func _ready() -> void:
 	_button(chapter_row, "Open chapter in Arrow", open_chapter)
 	_button(chapter_row, "Shared story settings…", open_story_settings)
 	message = _field(_row(layout), "Review message for import or editor changes", "")
+	var exports = _row(layout)
+	_button(exports, "Export loaded story ZIP", func(): export_story(false))
+	_button(exports, "Export loaded story for Dialogic", func(): export_story(true))
 	var actions = _row(layout)
 	_button(actions, "Propose current Arrow chapter", propose_current)
 	_button(actions, "Refresh proposals", refresh_proposals)
@@ -95,14 +103,34 @@ func _ready() -> void:
 	import_picker = FileDialog.new()
 	import_picker.access = FileDialog.ACCESS_FILESYSTEM
 	import_picker.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	import_picker.filters = PackedStringArray(["*.json ; Arrow story manifest"])
+	import_picker.filters = PackedStringArray(["*.json,*.zip ; Arrow story manifest, bundle or ZIP"])
 	add_child(import_picker)
 	import_picker.file_selected.connect(import_manifest)
+	export_picker = FileDialog.new()
+	export_picker.access = FileDialog.ACCESS_FILESYSTEM
+	export_picker.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	export_picker.filters = PackedStringArray(["*.zip ; Story export archive"])
+	add_child(export_picker)
+	export_picker.file_selected.connect(_save_export)
+	if Html5Helpers.Utils.is_browser():
+		browser_reader = Html5Helpers.BinaryReader.new()
 	server.text_changed.connect(func(_text): _connection_changed())
 	token.text_changed.connect(func(_text): _connection_changed())
 	var saved = Client.read_json(BINDINGS_PATH)
 	if saved.ok:
 		bindings = saved.value
+	if Html5Helpers.Utils.is_browser():
+		var cached = Client.read_json(SNAPSHOT_PATH)
+		if cached.ok and cached.value.get("service") is String and Client.valid_url(cached.value.service) and cached.value.get("snapshot") is Dictionary:
+			var value: Dictionary = cached.value.snapshot
+			if value.get("story_id") is String and value.get("revision") is float and Archive.sources(value.get("bundle")).ok:
+				snapshot = value
+				server.text = cached.value.service
+				stories.add_item("%s · cached revision %s" % [value.story_id, int(value.revision)])
+				stories.set_item_metadata(0, value.story_id)
+				for chapter in value.bundle.documents:
+					chapters.add_item(chapter)
+				status.text = "Cached story loaded for offline reading/export. Enter your token and connect for shared edits."
 	_set_working(false)
 
 func _row(parent: Node) -> HBoxContainer:
@@ -199,6 +227,13 @@ func load_story() -> void:
 	var response = await _send(HTTPClient.METHOD_GET, _path(_story()))
 	if response.ok:
 		snapshot = response.value
+		if stories.selected >= 0:
+			stories.set_item_text(stories.selected, "%s · revision %s" % [snapshot.story_id, int(snapshot.revision)])
+		if Html5Helpers.Utils.is_browser():
+			var cache = FileAccess.open(SNAPSHOT_PATH, FileAccess.WRITE)
+			if cache != null:
+				cache.store_string(JSON.stringify({"service": client.base_url, "snapshot": snapshot}))
+				cache.close()
 		chapters.clear()
 		for chapter in snapshot.bundle.documents:
 			chapters.add_item(chapter)
@@ -337,7 +372,16 @@ func import_manifest(path: String) -> void:
 	if message.text.strip_edges().is_empty():
 		status.text = "Enter a review message before importing a manifest."
 		return
-	var bundle = Client.read_bundle(path)
+	var bundle: Dictionary
+	if path.to_lower().ends_with(".zip"):
+		bundle = Archive.read_package(FileAccess.get_file_as_bytes(path), path.get_file())
+	else:
+		var value = Client.read_json(path)
+		if value.ok and value.value.has("package"):
+			var checked = Archive.sources(value.value)
+			bundle = {"ok": true, "value": value.value} if checked.ok else checked
+		else:
+			bundle = Client.read_bundle(path)
 	if not bundle.ok:
 		status.text = bundle.error
 		return
@@ -369,3 +413,60 @@ func open_story_settings() -> void:
 		story_settings.service_window = self
 		add_child(story_settings)
 	story_settings.begin(snapshot, client.base_url)
+
+func choose_import() -> void:
+	if working:
+		return
+	if Html5Helpers.Utils.is_browser():
+		status.text = "Choose a source ZIP containing its manifest and chapters, or a complete bundle JSON."
+		browser_reader.read_then(import_browser_package)
+	else:
+		import_picker.popup_centered_ratio(0.7)
+
+func import_browser_package(bytes: PackedByteArray, filename: String) -> void:
+	if filename.is_empty():
+		status.text = "Import cancelled."
+		return
+	if working or not _configure():
+		return
+	if message.text.strip_edges().is_empty():
+		status.text = "Enter a review message before importing a package."
+		return
+	var bundle = Archive.read_package(bytes, filename)
+	if not bundle.ok:
+		status.text = bundle.error
+		return
+	var response = await _send(HTTPClient.METHOD_POST, "/v1/stories", {"bundle": bundle.value, "message": message.text})
+	if response.ok:
+		await connect_service()
+		for index in stories.item_count:
+			if stories.get_item_metadata(index) == response.value.story_id:
+				stories.select(index)
+		await load_story()
+
+func export_story(dialogic: bool) -> void:
+	if working or snapshot.is_empty():
+		status.text = "Load a story before exporting."
+		return
+	var result = Archive.dialogic_archive(snapshot.bundle) if dialogic else Archive.source_archive(snapshot.bundle)
+	if not result.ok:
+		status.text = result.error
+		return
+	var filename = str(snapshot.story_id).validate_filename() + "-r%s" % int(snapshot.revision) + ("-dialogic.zip" if dialogic else "-sources.zip")
+	status.text = "Exporting loaded revision %s. Apply and reload local edits to include them in this story export." % int(snapshot.revision)
+	if Html5Helpers.Utils.is_browser():
+		JavaScriptBridge.download_buffer(result.bytes, filename)
+	else:
+		export_bytes = result.bytes
+		export_picker.current_file = filename
+		export_picker.popup_centered_ratio(0.7)
+
+func _save_export(path: String) -> void:
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		status.text = "Could not write the export."
+		return
+	file.store_buffer(export_bytes)
+	file.close()
+	export_bytes = PackedByteArray()
+	status.text = "Story export saved."
