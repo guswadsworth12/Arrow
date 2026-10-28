@@ -125,7 +125,7 @@ cd /path/to/Arrow
 /tmp/arrow-mcp-venv/bin/python -m services.story_mcp --url http://127.0.0.1:8765
 ```
 
-This is an **MCP stdio server**. An MCP host starts the command and exchanges
+The default is an **MCP stdio server**. An MCP host starts the command and exchanges
 JSON-RPC through stdin/stdout; service logs go to stderr. Running it by hand waits
 for MCP input. It does not start the HTTP backend. No token belongs in command
 arguments, checked-in host configuration, or chat messages.
@@ -146,9 +146,10 @@ A generic host entry, after configuring the token in that host's environment:
 
 Host configuration formats differ. If the host has no `cwd` option, use its
 working-directory setting or set `PYTHONPATH=/absolute/path/to/Arrow` in the
-host's private environment. This is a local stdio adapter, not a hosted remote
-ChatGPT connector. No OAuth, remote MCP HTTP transport, public deployment or
-account installation is included.
+host's private environment. For a hosted connection, use the
+[OAuth-protected Streamable HTTP deployment](remote-mcp.md), including Google
+sign-in through Keycloak, exact callback registration and workspace roles.
+Hosting/domain configuration and account installation are operator steps.
 
 ## MCP tools
 
@@ -166,8 +167,9 @@ By default the MCP host can read and propose edits; the Arrow UI or existing CLI
 applies reviewed proposals. Add `--allow-apply` to the MCP command when that host
 should also offer commits. Its tool description asks agents to review the diff
 and obtain user authorization; the host controls tool permissions. Tool
-annotations are hints, not an authorization mechanism. All clients currently
-share the same service token and backend permissions.
+annotations are hints, not an authorization mechanism. Local stdio and direct
+clients share the backend credential. Remote HTTP additionally enforces signed
+OAuth scopes and, in the supplied deployment, account roles before backend calls.
 
 `arrow://story-contract` provides the full source and operation contract as an
 MCP resource. Tool schemas expose the supported operations as a discriminated

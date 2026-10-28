@@ -71,6 +71,9 @@ before credentials can be forwarded. API responses use `Cache-Control: no-store`
 MCP and CLI clients continue to connect directly to the service. Their proposals
 appear in the PWA's normal review queue; PWA proposals are visible to those
 clients. No Python process or stdio MCP server runs inside the browser.
+The [remote MCP deployment](remote-mcp.md) can host this PWA alongside an
+OAuth-protected MCP endpoint. MCP Google sign-in does not change the PWA's
+existing token-based connection; all editing and exports remain available.
 
 ## Import, edit and export
 

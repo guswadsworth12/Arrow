@@ -1,9 +1,9 @@
 name: Dialogic bridge
 on:
   push:
-    paths: ['addons/arrow_dialogic/**', 'services/**', 'scripts/**', 'tests/**', 'web/**', 'tools/**', 'export_presets.cfg', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+    paths: ['addons/arrow_dialogic/**', 'services/**', 'deploy/**', '.dockerignore', 'scripts/**', 'tests/**', 'web/**', 'tools/**', 'export_presets.cfg', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
   pull_request:
-    paths: ['addons/arrow_dialogic/**', 'services/**', 'scripts/**', 'tests/**', 'web/**', 'tools/**', 'export_presets.cfg', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
+    paths: ['addons/arrow_dialogic/**', 'services/**', 'deploy/**', '.dockerignore', 'scripts/**', 'tests/**', 'web/**', 'tools/**', 'export_presets.cfg', 'examples/dialogic_bridge/**', '.github/workflows/dialogic-bridge.yml']
 permissions:
   contents: read
 jobs:
@@ -36,6 +36,12 @@ jobs:
         env:
           ARROW_STORY_GODOT: /tmp/godot/Godot_v4.6-stable_linux.x86_64
         run: python -m unittest discover -s tests/connectors -v
+      - name: Authenticated MCP HTTP and deployment configuration tests
+        env:
+          ARROW_STORY_GODOT: /tmp/godot/Godot_v4.6-stable_linux.x86_64
+        run: |
+          python -m unittest discover -s tests/remote_mcp -p test_remote.py -v
+          python -m unittest discover -s tests/remote_mcp -p test_deploy.py -v
 
   pwa:
     runs-on: ubuntu-latest
@@ -59,6 +65,10 @@ jobs:
           python -m playwright install --with-deps chromium
           git clone --depth 1 --branch 2.0-alpha-20 https://github.com/dialogic-godot/dialogic.git /tmp/pwa-dialogic
           test "$(git -C /tmp/pwa-dialogic rev-parse HEAD)" = e301e1bb5e62e6de22c6b7748c4372d0570bb4a7
+      - name: Real Keycloak login, PKCE and MCP OAuth integration
+        env:
+          ARROW_TEST_KEYCLOAK: '1'
+        run: python -m unittest discover -s tests/remote_mcp -p test_keycloak.py -v
       - name: Export test and production PWAs
         run: |
           python tools/export_pwa.py --godot /tmp/arrow-web-toolchain/godot --template /tmp/arrow-web-toolchain/web_nothreads_release.zip --test-driver --output /tmp/arrow-pwa-tests
@@ -79,3 +89,17 @@ jobs:
             /tmp/pwa-browser-results/*.log
             /tmp/pwa-browser-results/*.png
             /tmp/pwa-dialogic-export/*.log
+
+  remote-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the non-root story and MCP image
+        run: docker build -f deploy/remote-mcp/Dockerfile -t arrow-remote-mcp:test .
+      - name: Container native validation, persistence and private sidecar networking
+        env:
+          PYTHONPATH: .
+        run: python tests/remote_mcp/check_container.py

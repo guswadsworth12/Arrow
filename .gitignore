@@ -16,3 +16,8 @@
 .arrow-service/
 __pycache__/
 *.py[cod]
+
+# Private self-hosted OAuth deployment settings
+deploy/remote-mcp/.env
+deploy/remote-mcp/generated/
+deploy/remote-mcp/site/

@@ -1,0 +1,15 @@
+{$WORKSPACE_DOMAIN} {
+    request_body {
+        max_size 9MB
+    }
+    @mcp path /mcp /.well-known/oauth-protected-resource/mcp
+    handle @mcp {
+        reverse_proxy story:8766
+    }
+    handle {
+        reverse_proxy story:8765
+    }
+}
+{$AUTH_DOMAIN} {
+    reverse_proxy keycloak:8080
+}

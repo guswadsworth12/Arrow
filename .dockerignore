@@ -1,0 +1,17 @@
+*
+!services/
+!services/**
+!addons/
+!addons/arrow_dialogic/
+!addons/arrow_dialogic/**
+!docs/
+!docs/**
+!deploy/
+!deploy/remote-mcp/
+!deploy/remote-mcp/Dockerfile
+!license
+!copyright
+**/__pycache__/
+**/.env
+**/*.sqlite3
+**/*.sqlite3-*
