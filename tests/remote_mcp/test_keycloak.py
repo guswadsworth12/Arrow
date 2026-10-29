@@ -139,7 +139,7 @@ class KeycloakTests(unittest.IsolatedAsyncioTestCase):
             async with streamable_http_client(self.mcp,http_client=client) as (read,write,_):
                 async with ClientSession(read,write) as session:
                     await session.initialize()
-                    tools=await session.list_tools();self.assertEqual(len(tools.tools),6)
+                    tools=await session.list_tools();self.assertEqual(len(tools.tools),8)
                     self.assertIn('securitySchemes',tools.tools[0].meta)
                     resource=await session.read_resource('arrow://story-contract');self.assertTrue(resource.contents)
         self.assertIsNotNone(storage.tokens)

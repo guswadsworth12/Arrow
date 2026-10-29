@@ -251,7 +251,7 @@ def create_server(client: Client, *, allow_apply: bool = False, auth=None, token
             result["diff"] = before["diff"]
             return result
 
-    @server.tool(annotations=READ)
+    @server.tool(annotations=READ, meta=oauth_meta("arrow:read"))
     async def story_head(story_id: str, after_revision: Annotated[int, Field(ge=0, strict=True)] = 0,
                    wait_seconds: Annotated[float, Field(ge=0, le=25)] = 0) -> dict:
         """Current head revision, who committed it and its compiler diagnostics (no sources).
@@ -261,7 +261,7 @@ def create_server(client: Client, *, allow_apply: bool = False, auth=None, token
         """
         return await request("GET", story_path(story_id) + f"/head?after={after_revision}&wait={wait_seconds}")
 
-    @server.tool(annotations=READ)
+    @server.tool(annotations=READ, meta=oauth_meta("arrow:read"))
     async def story_changes(story_id: str, from_revision: Annotated[int, Field(ge=1, strict=True)],
                       to_revision: Annotated[int | None, Field(ge=1, strict=True)] = None) -> dict:
         """Diff between two revisions (to defaults to head): what changed, for example edits made in Arrow."""

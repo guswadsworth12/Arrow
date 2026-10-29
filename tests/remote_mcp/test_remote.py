@@ -172,6 +172,7 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             {'op':'update_node','document':'briefing','node':'2','data':{'content':'Edited over authenticated MCP HTTP.'}}]}
         async with self.session(self.jwt('arrow-reader')) as reader:
             tools=await reader.list_tools();self.assertEqual(len(tools.tools),10)
+            self.assertTrue(all(tool.meta and "securitySchemes" in tool.meta for tool in tools.tools))
             self.assertEqual((await self.call(reader,'read_story',{'story_id':story}))['revision'],1)
             self.assertEqual((await self.call(reader,'story_head',{'story_id':story}))['revision'],1)
             contract=await reader.read_resource('arrow://story-contract');self.assertTrue(contract.contents)
