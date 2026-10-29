@@ -1,9 +1,11 @@
-"""Authenticated HTTP interface. Mutation always goes through reviewed proposals."""
+"""Authenticated HTTP interface. Mutation goes through reviewed proposals or live, rebasing commits."""
 from __future__ import annotations
+import asyncio
 import os
 from pathlib import Path
 import secrets
 import sqlite3
+import time
 from urllib.parse import urlsplit
 
 from starlette.concurrency import run_in_threadpool
@@ -164,6 +166,25 @@ def create_app(*, store: Store | None = None, token: str | None = None, max_body
     async def propose(story_id: str, request: Request, actor: str = Depends(authorize)):
         value = await body(request, {"base_revision", "operations", "message"})
         return await run_in_threadpool(store.propose, story_id, value["base_revision"], value["operations"], value["message"], actor)
+
+    @app.post("/v1/stories/{story_id}/commits", status_code=201)
+    async def commit(story_id: str, request: Request, actor: str = Depends(authorize)):
+        value = await body(request, {"base_revision", "operations", "message"})
+        return await run_in_threadpool(store.commit, story_id, value["base_revision"], value["operations"], value["message"], actor)
+
+    @app.get("/v1/stories/{story_id}/head", dependencies=[Depends(authorize)])
+    async def head(story_id: str, after: int = Query(default=0, ge=0), wait: float = Query(default=0, ge=0, le=25)):
+        """Head metadata; with wait, holds the request until head passes after (live editors)."""
+        deadline = time.monotonic() + wait
+        while True:
+            current = await run_in_threadpool(store.head, story_id)
+            if current["revision"] > after or time.monotonic() >= deadline:
+                return current
+            await asyncio.sleep(0.25)
+
+    @app.get("/v1/stories/{story_id}/changes", dependencies=[Depends(authorize)])
+    def story_changes(story_id: str, start: int = Query(alias="from", ge=1), end: int | None = Query(default=None, alias="to", ge=1)):
+        return store.changes_between(story_id, start, end)
 
     @app.get("/v1/stories/{story_id}/proposals", dependencies=[Depends(authorize)])
     def proposals(story_id: str, after: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):

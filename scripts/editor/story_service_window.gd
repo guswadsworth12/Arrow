@@ -2,6 +2,7 @@ extends Window
 ## Shared story review UI; Arrow project saves stay local until an explicit apply.
 const Client = preload("story_service_client.gd")
 const Archive = preload("story_archive.gd")
+const LiveSync = preload("story_live_sync.gd")
 const BINDINGS_PATH = "user://story-service-bindings.json"
 const SNAPSHOT_PATH = "user://story-service-loaded.json"
 var Main
@@ -29,6 +30,7 @@ var story_settings: Window
 var browser_reader
 var export_picker: FileDialog
 var export_bytes = PackedByteArray()
+var live
 
 func _ready() -> void:
 	title = "Arrow · Story service"
@@ -39,6 +41,11 @@ func _ready() -> void:
 	visibility_changed.connect(_connect_signed_in)
 	client = Client.new()
 	add_child(client)
+	# Live sync outlives this window being hidden and draws its indicator over the editor.
+	live = LiveSync.new()
+	live.Main = Main
+	live.revision_changed.connect(_live_revision)
+	Main.add_child.call_deferred(live)
 	var margin = MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
@@ -70,6 +77,7 @@ func _ready() -> void:
 	chapter_row.add_child(chapters)
 	controls.append(chapters)
 	_button(chapter_row, "Open chapter in Arrow", open_chapter)
+	_button(chapter_row, "Open chapter live", func(): open_chapter(true))
 	_button(chapter_row, "Shared story settings…", open_story_settings)
 	message = _field(_row(layout), "Review message for import or editor changes", "")
 	var exports = _row(layout)
@@ -77,6 +85,8 @@ func _ready() -> void:
 	_button(exports, "Export loaded story for Dialogic", func(): export_story(true))
 	var actions = _row(layout)
 	_button(actions, "Propose current Arrow chapter", propose_current)
+	_button(actions, "Go live on current chapter", go_live)
+	_button(actions, "Stop live", stop_live)
 	_button(actions, "Refresh proposals", refresh_proposals)
 	next_button = _button(actions, "Next page", next_page)
 	var split = HSplitContainer.new()
@@ -276,7 +286,7 @@ func load_story() -> void:
 		_clear_review()
 		status.text = "Loaded %s revision %s. Opening a chapter creates a separate local Arrow project." % [snapshot.story_id, int(snapshot.revision)]
 
-func open_chapter() -> void:
+func open_chapter(live_mode: bool = false) -> void:
 	if working or snapshot.is_empty() or chapters.selected < 0:
 		return
 	if not Main.Mind.ProMan.is_project_saved():
@@ -299,6 +309,9 @@ func open_chapter() -> void:
 	bindings[str(uid)] = {"service": client.base_url, "story_id": snapshot.story_id, "chapter": chapter, "revision": int(snapshot.revision), "filename": filename, "project_path": ProjectSettings.globalize_path(Main.Mind.ProMan.get_project_file_path(uid))}
 	var persisted = _save_bindings()
 	status.text = "Editing %s at base revision %s. Use Arrow normally, then return here to propose this chapter." % [chapter, int(snapshot.revision)]
+	if live_mode:
+		live.start(client, snapshot.story_id, chapter, uid, int(snapshot.revision), true)
+		status.text = "Live: %s publishes as you edit and shows others' edits as they land. Every change is a revision you can restore." % chapter
 	if not persisted:
 		status.text += " Binding could not be saved; keep this session open and save a local copy."
 	else:
@@ -313,17 +326,47 @@ func _save_bindings() -> bool:
 			return true
 	return false
 
-func propose_current() -> void:
-	if working or not _configure():
-		return
+## The open project's service binding, or empty after explaining why there is none.
+func _current_binding() -> Dictionary:
 	var uid = Main.Mind.ProMan.get_active_project_id()
 	var binding = bindings.get(str(uid), {})
 	var listing = Main.Mind.ProMan.get_project_listing_by_id(uid)
 	if not binding is Dictionary or binding.is_empty() or not listing is Dictionary or listing.filename != binding.get("filename") or ProjectSettings.globalize_path(Main.Mind.ProMan.get_project_file_path(uid)) != binding.get("project_path"):
 		status.text = "Open a service chapter from this window first. The current project has no service binding."
-		return
+		return {}
 	if binding.service != client.base_url:
 		status.text = "This chapter belongs to another service. Reconnect to its original URL."
+		return {}
+	return binding
+
+## Resumes live editing of a chapter opened earlier; local edits since then are merged in.
+func go_live() -> void:
+	if working or not _configure():
+		return
+	var binding = _current_binding()
+	if binding.is_empty():
+		return
+	if Main.Mind._SNAPSHOT_INDEX_OF_PREVIEW >= 0:
+		status.text = "Return to the editable project before going live."
+		return
+	live.start(client, binding.story_id, binding.chapter, Main.Mind.ProMan.get_active_project_id(), int(binding.revision), false)
+	status.text = "Live from revision %s: local edits since then are merged with the shared story." % int(binding.revision)
+
+func stop_live() -> void:
+	live.stop()
+	status.text = "Live editing stopped. The local chapter keeps its last synced revision as its base."
+
+func _live_revision(revision: int) -> void:
+	var binding = bindings.get(str(live.project_uid))
+	if binding is Dictionary:
+		binding.revision = revision
+		_save_bindings()
+
+func propose_current() -> void:
+	if working or not _configure():
+		return
+	var binding = _current_binding()
+	if binding.is_empty():
 		return
 	if message.text.strip_edges().is_empty():
 		status.text = "Enter a review message before proposing edits."

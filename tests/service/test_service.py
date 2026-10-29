@@ -391,6 +391,74 @@ class ServiceTests(unittest.TestCase):
         bundle["documents"]["briefing"]["meta"]["epoch"] = 1700000000000
         self.error(422, lambda: apply_operations(bundle, [{"op": "add_node", "document": "briefing", "type": "content"}]))
 
+    def commit(self, story, operations, revision=1, message="Live edit"):
+        return self.client.request("POST", f"/v1/stories/{story}/commits", {"base_revision": revision, "operations": operations, "message": message})
+
+    def validated(self, story):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            head = self.client.request("GET", f"/v1/stories/{story}/head")
+            if not head["validation"].get("pending"):
+                return head
+            time.sleep(0.2)
+        self.fail("Live revision was not validated")
+
+    def test_live_commit_publishes_then_validates(self):
+        story, _ = self.fresh()
+        result = self.commit(story, [self.edit("Live text.")])
+        self.assertEqual((result["revision"], result["changed"], result["rebased_from"]), (2, True, None))
+        self.assertEqual(self.validated(story)["validation"]["ok"], True)
+        same = self.commit(story, [self.edit("Live text.")], 2)
+        self.assertEqual((same["revision"], same["changed"]), (2, False))
+        # Work in progress may not compile; it still syncs and reports diagnostics.
+        broken = self.commit(story, [{"op": "add_node", "document": "briefing", "type": "marker"}], 2)
+        self.assertEqual(broken["revision"], 3)
+        head = self.validated(story)
+        self.assertFalse(head["validation"]["ok"])
+        self.assertTrue(any("unsupported type" in error for error in head["validation"]["errors"]))
+        self.error(422, lambda: self.commit(story, [{"op": "restore_revision", "revision": 1}], 3))
+
+    def test_live_commits_rebase_disjoint_edits_and_refuse_clashes(self):
+        story, original = self.fresh()
+        self.commit(story, [self.edit("Edited in Arrow.")])
+        # An agent working from revision 1 adds a node and rewires: nothing it touches changed since.
+        agent = self.commit(story, [{"op": "add_node", "document": "briefing", "type": "content", "ref": "beat", "data": {"content": "New beat."}},
+                                    {"op": "set_connection", "document": "briefing", "node": "9", "slot": 0, "target": "@beat"}])
+        self.assertEqual((agent["revision"], agent["rebased_from"]), (3, 1))
+        briefing = agent["bundle"]["documents"]["briefing"]
+        self.assertEqual(briefing["resources"]["nodes"]["2"]["data"]["content"], "Edited in Arrow.")
+        self.assertIn(str(1 << 37), briefing["resources"]["nodes"])
+        # The editor, still on revision 2, moves a node and rewrites another; the agent's work survives.
+        chapter = copy.deepcopy(self.client.request("GET", f"/v1/stories/{story}/revisions/2")["bundle"]["documents"]["briefing"])
+        chapter["resources"]["scenes"]["0"]["map"]["5"]["offset"] = [820.0, 500.0]
+        chapter["resources"]["nodes"]["6"]["data"]["content"] = "Rewritten reply."
+        editor = self.commit(story, [{"op": "replace_document", "document": "briefing", "value": chapter}], 2)
+        merged = editor["bundle"]["documents"]["briefing"]
+        self.assertEqual((editor["revision"], editor["rebased_from"]), (4, 2))
+        self.assertEqual(merged["resources"]["scenes"]["0"]["map"]["5"]["offset"], [820, 500])
+        self.assertEqual(merged["resources"]["nodes"]["6"]["data"]["content"], "Rewritten reply.")
+        self.assertIn(str(1 << 37), merged["resources"]["nodes"])
+        # Both sides changing the same text is refused with the clashing path.
+        clash = self.error(409, lambda: self.commit(story, [{"op": "update_node", "document": "briefing", "node": "6", "data": {"content": "Agent reply."}}], 3))
+        self.assertEqual(clash.details["conflicts"], ["/documents/briefing/resources/nodes/6/data/content"])
+        stale = copy.deepcopy(original["documents"]["briefing"])
+        stale["resources"]["nodes"]["2"]["data"]["content"] = "Another device."
+        self.assertEqual(self.error(409, lambda: self.commit(story, [{"op": "replace_document", "document": "briefing", "value": stale}], 1)).code, "edit_conflict")
+        changes = self.client.request("GET", f"/v1/stories/{story}/changes?from=2&to=4")
+        self.assertIn("/documents/briefing/resources/nodes/6/data/content", [change["path"] for change in changes["diff"]])
+
+    def test_head_waits_for_the_next_revision(self):
+        story, _ = self.fresh()
+        self.assertEqual(self.client.request("GET", f"/v1/stories/{story}/head?after=1&wait=0")["revision"], 1)
+        timer = threading.Timer(0.5, lambda: Client(self.url, self.token).request(
+            "POST", f"/v1/stories/{story}/commits", {"base_revision": 1, "operations": [self.edit()], "message": "Live"}))
+        timer.start()
+        started = time.monotonic()
+        head = Client(self.url, self.token).request("GET", f"/v1/stories/{story}/head?after=1&wait=10")
+        timer.join()
+        self.assertEqual(head["revision"], 2)
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_link_removal_and_document_replacement(self):
         story, original = self.fresh()
         proposal = self.propose(story, [{"op": "remove_link", "document": "briefing", "node": "10"},
