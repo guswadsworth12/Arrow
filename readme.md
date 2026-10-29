@@ -137,7 +137,8 @@ reversible commits. It uses the same package compiler as the Godot addon. Arrow
 can exchange source checkouts through the CLI or use the desktop UI below.
 Hosted behind [Cloudflare Access](docs/cloudflare-access.md), people sign in instead
 of sharing a token, and every import, proposal and apply records who made it.
-A hosted ChatGPT connector remains future work.
+An [OAuth-protected remote MCP deployment](docs/remote-mcp.md) connects compatible
+hosts to the same workspace, with optional Google sign-in through Keycloak.
 
 ### Arrow UI and MCP
 
@@ -148,7 +149,8 @@ without hand-editing the manifest. The optional
 [official-SDK MCP adapter](docs/story-ui-mcp.md) reads and proposes edits over the
 same HTTP backend; explicit MCP commits can be enabled when configuring a host.
 Revision conflicts preserve local work. See the guide for launch settings and
-the tested Arrow/MCP round trip.
+the tested Arrow/MCP round trip. Remote hosting uses Streamable HTTP, signed
+tokens and read/edit/commit roles; public deployment requires your server/domain.
 
 ### PWA build and exports
 

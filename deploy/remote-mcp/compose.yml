@@ -1,0 +1,89 @@
+services:
+  story:
+    build:
+      context: ../..
+      dockerfile: deploy/remote-mcp/Dockerfile
+    restart: unless-stopped
+    environment:
+      ARROW_STORY_API_TOKEN: ${ARROW_STORY_API_TOKEN:?Run prepare.py first}
+      ARROW_STORY_WEB_ROOT: ${ARROW_STORY_WEB_ROOT:-}
+    volumes:
+      - story-data:/data
+      - ${ARROW_PWA_DIR:-./site}:/site:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  mcp:
+    build:
+      context: ../..
+      dockerfile: deploy/remote-mcp/Dockerfile
+    restart: unless-stopped
+    # Sidecar networking keeps the private story API on loopback. Only Caddy is published.
+    network_mode: service:story
+    depends_on:
+      story:
+        condition: service_healthy
+    command: [python, -m, services.story_mcp, --transport, streamable-http, --host, 0.0.0.0]
+    environment:
+      ARROW_STORY_URL: http://127.0.0.1:8765
+      ARROW_STORY_API_TOKEN: ${ARROW_STORY_API_TOKEN:?Run prepare.py first}
+      ARROW_MCP_PUBLIC_URL: https://${WORKSPACE_DOMAIN:?Set workspace domain}/mcp
+      ARROW_MCP_ISSUER_URL: https://${AUTH_DOMAIN:?Set authentication domain}/realms/arrow
+      ARROW_MCP_JWKS_URL: https://${AUTH_DOMAIN}/realms/arrow/protocol/openid-connect/certs
+      ARROW_MCP_KEYCLOAK_ROLES: "true"
+      ARROW_MCP_ALLOW_APPLY: ${ARROW_MCP_ALLOW_APPLY:-false}
+  postgres:
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${ARROW_AUTH_DB_PASSWORD:?Run prepare.py first}
+    volumes:
+      - auth-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U keycloak -d keycloak]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    restart: unless-stopped
+    command: [start, --import-realm]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${ARROW_AUTH_DB_PASSWORD}
+      KC_HOSTNAME: https://${AUTH_DOMAIN}
+      KC_HOSTNAME_STRICT: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD}
+    volumes:
+      - ./generated:/opt/keycloak/data/import:ro
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      WORKSPACE_DOMAIN: ${WORKSPACE_DOMAIN}
+      AUTH_DOMAIN: ${AUTH_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [story, mcp, keycloak]
+volumes:
+  story-data:
+  auth-db:
+  caddy-data:
+  caddy-config:
