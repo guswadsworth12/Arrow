@@ -29,7 +29,7 @@ from services.story_service import access as cloudflare_access
 from services.story_service.access import AccessVerifier
 from services.story_service.api import create_app
 from services.story_service.client import Client, checkout, load_bundle
-from services.story_service.model import ServiceError, apply_operations, bundle_shape, changes, content_hash, parse_json, source_text
+from services.story_service.model import ServiceError, apply_operations, base36, bundle_shape, changes, content_hash, parse_json, source_text
 from services.story_service.store import Store
 from services.story_service.validator import GodotValidator
 
@@ -333,6 +333,63 @@ class ServiceTests(unittest.TestCase):
         with store.connection(write=True) as connection:
             connection.execute("DROP TRIGGER fail_apply")
         self.assertEqual(store.apply(created["story_id"], proposal["id"])["revision"], 2)
+
+    def test_created_resources_use_native_uids_and_batch_references(self):
+        story, _ = self.fresh()
+        proposal = self.propose(story, [
+            {"op": "add_variable", "document": "followup", "name": "depot_searched", "type": "bool", "init": False, "ref": "searched"},
+            {"op": "add_character", "document": "followup", "name": "Hesk", "color": "c8a050", "ref": "hesk"},
+            {"op": "add_node", "document": "followup", "type": "monolog", "ref": "line",
+             "data": {"character": "@hesk", "monolog": "The depot is this way."}},
+            {"op": "add_node", "document": "followup", "type": "variable_update", "ref": "mark",
+             "data": {"variable": "@searched", "operator": "set", "with": [0, True]}},
+            {"op": "set_connection", "document": "followup", "node": "6", "slot": 0, "target": "@line"},
+            {"op": "set_connection", "document": "followup", "node": "@line", "slot": 0, "target": "@mark"}])
+        self.assertEqual(proposal["status"], "ready", proposal["validation"])
+        bundle = self.apply(story, proposal)["bundle"]
+        followup = bundle["documents"]["followup"]
+        # Chapter 1, new author slot 1, seeds 0..3: Arrow's (chapter << 43) | (author << 37) | seed.
+        base = (1 << 43) | (1 << 37)
+        variable, character, line, mark = (str(base + seed) for seed in range(4))
+        self.assertEqual(followup["meta"]["authors"]["1"], ["Arrow Story Service", 4])
+        self.assertEqual(followup["resources"]["nodes"][line]["data"]["character"], int(character))
+        self.assertEqual(followup["resources"]["nodes"][mark]["data"]["variable"], int(variable))
+        self.assertEqual(followup["resources"]["nodes"][line]["name"], base36(int(line)))
+        self.assertIn([int(line), 0, int(mark), 0], followup["resources"]["scenes"]["0"]["map"][line]["io"])
+        self.assertEqual(bundle["package"]["documents"]["followup"]["variables"][variable], "depot_searched")
+        self.assertEqual(bundle["package"]["registry"]["characters"]["Hesk"], {"name": "Hesk"})
+        # The next batch continues the service author's seed; existing registry keys are reused.
+        again = self.propose(story, [{"op": "add_node", "document": "briefing", "type": "content", "data": {"content": "Later."}},
+                                    {"op": "add_character", "document": "briefing", "key": "Hesk"}], 2)
+        self.assertEqual(again["status"], "ready", again["validation"])
+        briefing = self.apply(story, again)["bundle"]["documents"]["briefing"]
+        self.assertIn(str(1 << 37), briefing["resources"]["nodes"])
+        self.assertEqual(briefing["resources"]["characters"][str((1 << 37) + 1)]["name"], "Hesk")
+        self.error(422, lambda: self.propose(story, [{"op": "set_connection", "document": "briefing", "node": "2", "slot": 0, "target": "@missing"}], 3))
+        self.error(422, lambda: self.propose(story, [{"op": "add_variable", "document": "briefing", "key": "request_accepted"}], 3))
+
+    def test_remove_node_drops_wires_and_links(self):
+        story, _ = self.fresh()
+        proposal = self.propose(story, [{"op": "remove_node", "document": "briefing", "node": "9"},
+                                      {"op": "set_connection", "document": "briefing", "node": "7", "slot": 0, "target": "8"}])
+        self.assertEqual(proposal["status"], "ready", proposal["validation"])
+        briefing = self.apply(story, proposal)["bundle"]["documents"]["briefing"]
+        self.assertNotIn("9", briefing["resources"]["nodes"])
+        self.assertNotIn("9", briefing["resources"]["scenes"]["0"]["map"])
+        self.assertEqual(briefing["resources"]["scenes"]["0"]["map"]["7"]["io"], [[7, 1, 8, 0], [7, 0, 8, 0]])
+        unlinked = self.propose(story, [{"op": "remove_node", "document": "briefing", "node": "10"}], 2)
+        self.assertEqual(unlinked["candidate"]["package"]["links"], [])
+        self.error(422, lambda: self.propose(story, [{"op": "remove_node", "document": "briefing", "node": "1"}], 2))
+
+    def test_allocation_skips_used_uids_and_refuses_snowflake_chapters(self):
+        bundle = copy.deepcopy(self.fixture)
+        taken = str(1 << 37)
+        bundle["documents"]["briefing"]["resources"]["nodes"][taken] = {"type": "content", "name": "taken", "data": {}}
+        result = apply_operations(bundle, [{"op": "add_node", "document": "briefing", "type": "content"}])
+        self.assertIn(str((1 << 37) + 1), result["documents"]["briefing"]["resources"]["nodes"])
+        self.assertEqual(result["documents"]["briefing"]["meta"]["authors"]["1"][1], 2)
+        bundle["documents"]["briefing"]["meta"]["epoch"] = 1700000000000
+        self.error(422, lambda: apply_operations(bundle, [{"op": "add_node", "document": "briefing", "type": "content"}]))
 
     def test_link_removal_and_document_replacement(self):
         story, original = self.fresh()

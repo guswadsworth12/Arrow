@@ -103,7 +103,8 @@ retain their original base revision intentionally. The CLI never silently
 advances their revision, merges edits, or replaces their files. Local source
 formatting is normalized on export; document IDs, graph data and authorship
 metadata are preserved as JSON values. Service edits do not impersonate an Arrow
-contributor or allocate native Arrow resource IDs.
+contributor: resources they create use Arrow's native UIDs under a dedicated
+author (see [Creating resources](#creating-resources)).
 
 For a remote service put `--url https://YOUR_SERVICE` **before** the subcommand.
 Set the same token securely in that client's environment. The checked-out URL
@@ -140,12 +141,43 @@ A minimal `story-edits.json`:
 | `replace_document` | `document`, `value` | Replace one chapter with a full Arrow object, such as an editor export. |
 | `replace_bundle` | `bundle` | Replace all sources; must be the only operation. Used by checkout push. |
 | `restore_revision` | positive integer `revision` | Propose restoring a historical snapshot; must be the only operation. |
+| `add_node` | `document`, `type`, optional `scene`, `name`, `data`, `offset`, `ref` | Create a node with a new UID and place it in the scene (the only scene by default). |
+| `remove_node` | `document`, `node` | Delete a node, its placement, wires into it and package links from or to it. Entries cannot be removed. |
+| `add_variable` | `document`, optional `name`, `type`, `init`, `key`, `ref` | Create a chapter variable mapped to registry `key` (default: `name`). |
+| `add_character` | `document`, optional `name`, `color`, `key`, `ref` | Create a chapter character mapped to registry `key` (default: `name`). |
 
 UIDs remain decimal strings. Batches contain 1–100 operations and are validated
 as a whole. The service rejects unknown operation fields and preserves the story
-id. New node/resource allocation remains owned by Arrow; full document/bundle
-replacement supports those editor changes. There is no arbitrary filesystem,
-shell, SQL or JSON-pointer execution operation.
+id. There is no arbitrary filesystem, shell, SQL or JSON-pointer execution
+operation.
+
+### Creating resources
+
+`add_node`, `add_variable` and `add_character` allocate UIDs exactly as Arrow's
+native generator does: `(chapter << 43) | (author << 37) | seed`. They use a
+dedicated `Arrow Story Service` entry in the chapter's `meta.authors`, created in
+the first free author slot, so a human contributor's seed is never advanced.
+Allocation skips UIDs already used in the chapter. Chapters that use time-based
+Snowflake UIDs (`meta.epoch`) must create resources in Arrow.
+
+Give a created resource a `ref`, then write `"@ref"` in later operations of the
+same batch: as `node`, `target` or `target_node`, or as an exact value inside
+`data` (for example `"character": "@hesk"`), where it becomes the integer UID.
+References are local to their chapter and batch. Read the proposal diff for the
+allocated UIDs.
+
+```json
+[
+  {"op": "add_character", "document": "followup", "name": "Hesk", "ref": "hesk"},
+  {"op": "add_node", "document": "followup", "type": "monolog", "ref": "line",
+   "data": {"character": "@hesk", "monolog": "The depot is this way."}},
+  {"op": "set_connection", "document": "followup", "node": "6", "slot": 0, "target": "@line"}
+]
+```
+
+New variables and characters always join the shared registry. A new key needs
+every field (`name`, `type` and `init` for variables; `name` for characters).
+An existing key reuses its registry fields, and a chapter maps each key once.
 
 Registry defaults affect authored initial values and self-reference operands.
 They do not migrate game saves, reset live variables, or replace existing game
