@@ -13,7 +13,9 @@ bearer token, then **Connect**. The window also reads `ARROW_STORY_URL` and
 `ARROW_STORY_API_TOKEN` from Arrow's launch environment. Tokens stay in memory;
 they are never written into Arrow projects, configuration or binding metadata.
 Remote URLs require HTTPS; HTTP is accepted only on loopback. Redirects are
-refused. The connector does not need Python inside the editor. See the
+refused. Through [Cloudflare Access](cloudflare-access.md), also set
+`ARROW_STORY_ACCESS_CLIENT_ID` and `ARROW_STORY_ACCESS_CLIENT_SECRET` (desktop and
+MCP); the PWA uses its sign-in instead. The connector does not need Python inside the editor. See the
 [PWA guide](pwa.md) for building, hosting, browser CORS and offline/export support.
 
 For a new story, enter a review message and choose **Import manifest…**, selecting
@@ -51,7 +53,26 @@ survive editor restarts; reopening that local project from Arrow's usual project
 list allows another proposal against the original base. Refreshing the service
 never silently rebases local work. A stale proposal attempt returns a conflict
 and leaves local changes intact. Open a fresh chapter and deliberately copy the
-wanted edits when resolving a conflict. There is no automatic merge or live sync.
+wanted edits when resolving a conflict. For simultaneous editing, use live mode.
+
+### Live mode
+
+Choose **Open chapter live** instead of **Open chapter in Arrow** to edit a chapter
+together with other editors and AI agents. Arrow publishes your edits about half a
+second after you stop changing the graph, and loads everyone else's as they land.
+An indicator in the editor's bottom-right corner shows the revision and whether
+it compiles.
+
+- Edits to different nodes, fields and placements merge. If someone changed the
+  same value first, your change is refused and theirs is kept; the indicator says
+  which path clashed.
+- Arrow waits to load others' edits while you are typing in a field or dragging
+  on the grid, so unsaved inspector text is never replaced.
+- Undo history restarts after others' edits load, so undo cannot silently revert
+  them. Every change remains a revision that can be restored by proposal.
+- Live sync pauses while another project is open. **Go live on current chapter**
+  resumes a service chapter, merging its local edits since its last revision;
+  **Stop live** stops syncing. Local saves are not needed and are not synced.
 
 The chapter editor proposes one full chapter replacement at a time. Shared story
 settings have their own structured batch editor below. The existing supported
@@ -162,6 +183,9 @@ Hosting/domain configuration and account installation are operator steps.
 | `read_story_proposal(story_id, proposal_id, include_candidate=false)` | Read operations, diff, validation, current head and status; optionally include full candidate. |
 | `propose_story_edits(story_id, base_revision, operations, message)` | Save a validated candidate for review; does not advance the head. |
 | `apply_story_proposal(story_id, proposal_id)` | Explicit commit; exposed only with `--allow-apply`. |
+| `commit_story_edits(story_id, base_revision, operations, message)` | Live edit: publish at once, rebased onto head; exposed only with `--allow-apply`. |
+| `story_head(story_id, after_revision=0, wait_seconds=0)` | Head revision, committer and diagnostics; optionally wait for a newer revision. |
+| `story_changes(story_id, from_revision, to_revision?)` | Diff between revisions, such as edits just made in Arrow. |
 
 By default the MCP host can read and propose edits; the Arrow UI or existing CLI
 applies reviewed proposals. Add `--allow-apply` to the MCP command when that host
@@ -175,7 +199,8 @@ OAuth scopes and, in the supplied deployment, account roles before backend calls
 MCP resource. Tool schemas expose the supported operations as a discriminated
 union, including registry updates, graph connections, external links, document
 replacement and restoration. Unknown operations/extra fields are rejected. Node
-UIDs are decimal **strings**, not integers. Arrow allocates new resource IDs.
+UIDs are decimal **strings**, not integers. New resources get Arrow-native IDs
+from the `add_*` operations.
 Narrative content is source data and must not be treated as agent instructions.
 
 An example `propose_story_edits` call after reading revision 1:

@@ -154,15 +154,205 @@ def _node(bundle: dict, operation: dict) -> tuple[dict, str]:
     return document, node_id
 
 
+# Arrow's native distributed UID (scripts/shared/flake_id_helpers.gd, bit sizes
+# [10, 6, 37] in settings.gd): chapter, author and per-author incremental seed.
+SERVICE_AUTHOR = "Arrow Story Service"
+CHAPTER_LIMIT, AUTHOR_LIMIT, SEED_LIMIT = 2 ** 10, 2 ** 6, 2 ** 37
+CHAPTER_SHIFT, AUTHOR_SHIFT = 43, 37
+MAX_EXACT_INTEGER = 2 ** 53 - 1  # The native compiler rejects larger JSON IDs.
+REFERENCE = re.compile(r"@([A-Za-z_][A-Za-z0-9_]{0,63})")
+
+
+def base36(value: int) -> str:
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    text = ""
+    while True:
+        value, digit = divmod(value, 36)
+        text = digits[digit] + text
+        if value == 0:
+            return text
+
+
+def _allocate(document: dict) -> str:
+    """Allocate a resource UID exactly as Arrow does, under a dedicated service author.
+
+    The service never advances a human contributor's seed, so chapters later edited
+    in Arrow cannot collide with service-created resources.
+    """
+    meta = document.get("meta")
+    if not isinstance(meta, dict) or not isinstance(meta.get("authors"), dict) or type(meta.get("chapter")) is not int:
+        reject("Creating resources needs Arrow chapter and author metadata; save the chapter in Arrow first")
+    if type(meta.get("epoch")) is int and meta["epoch"] > 0:
+        reject("This chapter uses time-based Snowflake UIDs; create its resources in Arrow")
+    chapter, authors = meta["chapter"], meta["authors"]
+    if not 0 <= chapter < CHAPTER_LIMIT:
+        reject("The chapter id is outside Arrow's native UID range")
+    author = next((key for key, value in authors.items()
+                   if isinstance(value, list) and len(value) == 2 and value[0] == SERVICE_AUTHOR), None)
+    if author is None:
+        author = next((str(key) for key in range(1, AUTHOR_LIMIT) if str(key) not in authors), None)
+        if author is None:
+            reject("No free Arrow author slot remains for service-created resources")
+        authors[author] = [SERVICE_AUTHOR, 0]
+    if not author.isdigit() or not 0 < int(author) < AUTHOR_LIMIT:
+        reject("The service author has an invalid Arrow author id")
+    used = {uid for collection in document["resources"].values() if isinstance(collection, dict) for uid in collection}
+    seed = authors[author][1]
+    while True:
+        if type(seed) is not int or not 0 <= seed < SEED_LIMIT:
+            reject("The service author's Arrow seed is exhausted or malformed")
+        uid = (chapter << CHAPTER_SHIFT) | (int(author) << AUTHOR_SHIFT) | seed
+        seed += 1
+        if uid > MAX_EXACT_INTEGER:
+            reject("The allocated UID would exceed the compiler's exact integer range")
+        if str(uid) not in used:
+            authors[author][1] = seed
+            return str(uid)
+
+
+def _reference(value: Any, references: dict, document: Any) -> Any:
+    """Resolve an "@ref" alias to a UID created earlier in this batch."""
+    match = REFERENCE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return value
+    if match[1] not in references:
+        reject(f"Unknown reference {value}; create it earlier in the same batch")
+    owner, uid = references[match[1]]
+    if owner != document:
+        reject(f"Reference {value} belongs to chapter {owner}")
+    return uid
+
+
+def _data_references(value: Any, references: dict, document: str) -> Any:
+    """Replace exact "@ref" strings for resources created in this batch with integer UIDs."""
+    if isinstance(value, dict):
+        return {key: _data_references(item, references, document) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_data_references(item, references, document) for item in value]
+    match = REFERENCE.fullmatch(value) if isinstance(value, str) else None
+    if match is not None and match[1] in references:
+        return int(_reference(value, references, document))
+    return value
+
+
+def _resolve(operation: dict, references: dict) -> dict:
+    operation = dict(operation)
+    document = operation.get("document")
+    for field in ("node", "target"):
+        if field in operation:
+            operation[field] = _reference(operation[field], references, document)
+    if "target_node" in operation:
+        operation["target_node"] = _reference(operation["target_node"], references, operation.get("target_document"))
+    if isinstance(operation.get("data"), dict):
+        operation["data"] = _data_references(operation["data"], references, document)
+    return operation
+
+
+def _register(references: dict, operation: dict, document: str, uid: str) -> None:
+    if "ref" not in operation:
+        return
+    if not identifier(operation["ref"]) or operation["ref"] in references:
+        reject("Each ref must be a new identifier within the batch")
+    references[operation["ref"]] = (document, uid)
+
+
+def _add_shared(bundle: dict, document: str, collection: str, operation: dict, fields: tuple) -> str:
+    """Create a chapter-local character or variable mapped to the package registry."""
+    chapter = _document(bundle, document)
+    local = {field: copy.deepcopy(operation[field]) for field in fields if field in operation}
+    key = operation.get("key", local.get("name"))
+    if not identifier(key):
+        reject("Registry keys must be identifiers; pass key or an identifier-style name")
+    registry = bundle["package"].setdefault("registry", {}).setdefault(collection, {})
+    mapping = bundle["package"]["documents"][document].setdefault(collection, {})
+    if key in mapping.values():
+        reject(f"Chapter {document} already maps registry {collection} key {key}")
+    if key in registry:
+        for field, value in local.items():
+            if registry[key].get(field) != value:
+                reject(f"Registry {collection} {key} already has a different {field}")
+        local = {field: copy.deepcopy(registry[key][field]) for field in fields if field in registry[key]}
+    else:
+        missing = [field for field in fields if field not in local]
+        if missing:
+            reject(f"A new registry entry needs {missing}")
+        registry[key] = copy.deepcopy(local)
+    uid = _allocate(chapter)
+    if collection == "characters":
+        local.update(color=operation.get("color", "ffffff"), tags={})
+    chapter["resources"][collection][uid] = local
+    mapping[uid] = key
+    return uid
+
+
 def _apply_operations(original: dict, operations: Any) -> dict:
     if not isinstance(operations, list) or not 1 <= len(operations) <= 100:
         reject("Supply between 1 and 100 structured operations")
     bundle = copy.deepcopy(original)
+    references = {}
     for operation in operations:
         if not isinstance(operation, dict) or not isinstance(operation.get("op"), str):
             reject("Each operation needs an op string")
+        operation = _resolve(operation, references)
         kind = operation["op"]
-        if kind == "replace_bundle":
+        if kind == "add_node":
+            _object(operation, {"op", "document", "type", "scene", "name", "data", "offset", "ref"}, {"op", "document", "type"})
+            document = _document(bundle, operation["document"])
+            if not identifier(operation["type"]):
+                reject("Node type must be an Arrow node type name")
+            data = operation.get("data", {})
+            if not isinstance(data, dict):
+                reject("add_node data must be an object")
+            scenes = document["resources"]["scenes"]
+            scene_id = operation.get("scene")
+            if scene_id is None:
+                if len(scenes) != 1:
+                    reject("This chapter has several scenes; name the scene for the new node")
+                scene_id = next(iter(scenes))
+            if not isinstance(scene_id, str) or scene_id not in scenes:
+                reject("Unknown scene UID; use canonical decimal strings")
+            placements = scenes[scene_id]["map"]
+            offset = operation.get("offset")
+            if offset is None:
+                # Arrow lays graphs out left to right; start a new column past the rightmost node.
+                right = max((place["offset"][0] for place in placements.values()
+                             if isinstance(place.get("offset"), list) and place["offset"]), default=-300)
+                offset = [right + 300, 180]
+            if not isinstance(offset, list) or len(offset) != 2 or any(type(value) is not int for value in offset):
+                reject("Node offset must be two whole numbers")
+            uid = _allocate(document)
+            name = operation.get("name", base36(int(uid)))
+            if not isinstance(name, str):
+                reject("Node name must be text")
+            document["resources"]["nodes"][uid] = {"type": operation["type"], "name": name, "data": copy.deepcopy(data)}
+            placements[uid] = {"offset": offset, "io": []}
+            _register(references, operation, operation["document"], uid)
+        elif kind == "remove_node":
+            _object(operation, {"op", "document", "node"}, {"op", "document", "node"})
+            document, node_id = _node(bundle, operation)
+            here = {"document": operation["document"], "node": node_id}
+            if (int(node_id) == document.get("entry") or bundle["package"].get("entry") == here
+                    or any(scene.get("entry") == int(node_id) for scene in document["resources"]["scenes"].values())):
+                reject("A story, chapter or scene entry cannot be removed")
+            del document["resources"]["nodes"][node_id]
+            for scene in document["resources"]["scenes"].values():
+                scene["map"].pop(node_id, None)
+                for placement in scene["map"].values():
+                    if "io" in placement:
+                        placement["io"] = [wire for wire in placement["io"] if str(wire[2]) != node_id]
+            if "links" in bundle["package"]:
+                bundle["package"]["links"] = [link for link in bundle["package"]["links"] if here not in (link["from"], link["to"])]
+        elif kind == "add_variable":
+            _object(operation, {"op", "document", "name", "type", "init", "key", "ref"}, {"op", "document"})
+            uid = _add_shared(bundle, operation["document"], "variables", operation, ("name", "type", "init"))
+            _register(references, operation, operation["document"], uid)
+        elif kind == "add_character":
+            _object(operation, {"op", "document", "name", "color", "key", "ref"}, {"op", "document"})
+            if "color" in operation and (not isinstance(operation["color"], str) or not re.fullmatch(r"[0-9a-fA-F]{6}", operation["color"])):
+                reject("Character color must be six hexadecimal digits")
+            uid = _add_shared(bundle, operation["document"], "characters", operation, ("name",))
+            _register(references, operation, operation["document"], uid)
+        elif kind == "replace_bundle":
             _object(operation, {"op", "bundle"}, {"op", "bundle"})
             if len(operations) != 1:
                 reject("replace_bundle must be the only operation")
@@ -267,6 +457,61 @@ def changes(before: Any, after: Any, path: str = "") -> list[dict]:
     if type(before) is not type(after) or before != after:
         return [{"path": path, "before_exists": True, "after_exists": True, "before": before, "after": after}]
     return []
+
+
+_MISSING = object()
+
+
+def _same(left: Any, right: Any) -> bool:
+    # JSON equality: True is not 1, and key order does not matter.
+    if left is _MISSING or right is _MISSING:
+        return left is right
+    return canonical(left) == canonical(right)
+
+
+def _merge(base: Any, ours: Any, theirs: Any, path: str, conflicts: list) -> Any:
+    if _same(ours, theirs) or _same(theirs, base):
+        return ours
+    if _same(ours, base):
+        return theirs
+    if all(isinstance(value, dict) for value in (base, ours, theirs)):
+        merged = {}
+        for key in sorted(base.keys() | ours.keys() | theirs.keys()):
+            value = _merge(base.get(key, _MISSING), ours.get(key, _MISSING), theirs.get(key, _MISSING),
+                           path + "/" + key.replace("~", "~0").replace("/", "~1"), conflicts)
+            if value is not _MISSING:
+                merged[key] = value
+        return merged
+    conflicts.append(path)
+    return theirs
+
+
+def merge(base: Any, ours: Any, theirs: Any) -> tuple[Any, list[str]]:
+    """Three-way merge of JSON sources: objects merge per key, other values are atomic.
+
+    Returns the merged value and the paths both sides changed differently.
+    """
+    conflicts: list[str] = []
+    merged = _merge(base, ours, theirs, "", conflicts)
+    return copy.deepcopy(merged), conflicts
+
+
+def overlapping(ours: list[dict], theirs: list[dict]) -> list[str]:
+    """Paths changed by both diffs, where one path equals or contains the other."""
+    mine = [change["path"] for change in ours]
+    return sorted({path for path in mine for other in (change["path"] for change in theirs)
+                   if path == other or path.startswith(other + "/") or other.startswith(path + "/")})
+
+
+def whole_numbers(value: Any) -> Any:
+    """Godot's JSON writes integral floats such as 260.0; store them as the integers they are."""
+    if isinstance(value, dict):
+        return {key: whole_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [whole_numbers(item) for item in value]
+    if isinstance(value, float) and value.is_integer() and abs(value) <= MAX_EXACT_INTEGER:
+        return int(value)
+    return value
 
 
 def apply_operations(original: dict, operations: Any) -> dict:

@@ -22,6 +22,11 @@ class Client:
         self.token = token if token is not None else os.environ.get("ARROW_STORY_API_TOKEN", "")
         if not self.token or not self.token.isascii():
             raise ValueError("Set ARROW_STORY_API_TOKEN in the client environment")
+        # A Cloudflare Access service token lets non-browser clients through Access in front of the service.
+        access_id, access_secret = os.environ.get("ARROW_STORY_ACCESS_CLIENT_ID", ""), os.environ.get("ARROW_STORY_ACCESS_CLIENT_SECRET", "")
+        if (access_id or access_secret) and not (access_id and access_secret and access_id.isascii() and access_secret.isascii()):
+            raise ValueError("Set both ARROW_STORY_ACCESS_CLIENT_ID and ARROW_STORY_ACCESS_CLIENT_SECRET, or neither")
+        self.access_headers = {"CF-Access-Client-Id": access_id, "CF-Access-Client-Secret": access_secret} if access_id else {}
         # Do not forward the bearer token to redirects, including a different host.
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -30,7 +35,7 @@ class Client:
 
     def request(self, method: str, path: str, value=None):
         request = urllib.request.Request(self.url + path, method=method,
-            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"},
+            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json", **self.access_headers},
             data=None if value is None else canonical(value).encode())
         try:
             with self.opener.open(request, timeout=90) as response:

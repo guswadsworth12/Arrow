@@ -171,8 +171,9 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         args={'story_id':story,'base_revision':1,'message':'Remote editor proposal','operations':[
             {'op':'update_node','document':'briefing','node':'2','data':{'content':'Edited over authenticated MCP HTTP.'}}]}
         async with self.session(self.jwt('arrow-reader')) as reader:
-            tools=await reader.list_tools();self.assertEqual(len(tools.tools),7)
+            tools=await reader.list_tools();self.assertEqual(len(tools.tools),10)
             self.assertEqual((await self.call(reader,'read_story',{'story_id':story}))['revision'],1)
+            self.assertEqual((await self.call(reader,'story_head',{'story_id':story}))['revision'],1)
             contract=await reader.read_resource('arrow://story-contract');self.assertTrue(contract.contents)
             denied=await reader.call_tool('propose_story_edits',args)
             self.assertTrue(denied.isError);self.assertIn('arrow:edit',denied.content[0].text)
@@ -180,6 +181,8 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             proposal=await self.call(editor,'propose_story_edits',args)
             self.assertEqual(proposal['status'],'ready')
             denied=await editor.call_tool('apply_story_proposal',{'story_id':story,'proposal_id':proposal['id']})
+            self.assertTrue(denied.isError);self.assertIn('arrow:apply',denied.content[0].text)
+            denied=await editor.call_tool('commit_story_edits',args)  # Live commits publish, so they need apply too.
             self.assertTrue(denied.isError);self.assertIn('arrow:apply',denied.content[0].text)
             self.assertEqual((await self.call(editor,'read_story',{'story_id':story}))['revision'],1)
         async with self.session(self.jwt('arrow-committer')) as committer:
@@ -189,6 +192,11 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.call(committer,'apply_story_proposal',commit),result)
             old=await self.call(committer,'read_story',{'story_id':story,'revision':1});self.assertEqual(old['revision'],1)
             self.assertNotIn('Edited over authenticated',json.dumps(old))
+            live=await self.call(committer,'commit_story_edits',{**args,'base_revision':2,'message':'Remote live edit','operations':[
+                {'op':'update_node','document':'briefing','node':'2','data':{'content':'Published live over MCP HTTP.'}}]})
+            self.assertEqual(live['revision'],3);self.assertTrue(live['diff'])
+            changes=await self.call(committer,'story_changes',{'story_id':story,'from_revision':2})
+            self.assertIn('Published live',json.dumps(changes))
 
     async def test_claimed_scopes_cannot_escalate_roles_and_roles_need_scopes(self):
         async with self.session(self.jwt('arrow-reader')) as session:

@@ -9,8 +9,9 @@ and does not require this service or Python.
 
 The [Arrow desktop/PWA UI and MCP adapter](story-ui-mcp.md) also connect to this
 backend. The CLI remains available for source checkout and structured edits.
-No hosted ChatGPT connector, public deployment, game adapter, OAuth, user roles,
-or real-time collaborative editor is included.
+Optional [Cloudflare Access sign-in](cloudflare-access.md) identifies who imports,
+proposes and applies each change. No hosted ChatGPT connector, public deployment,
+game adapter, user roles, or real-time collaborative editor is included.
 
 ## Install and run
 
@@ -55,7 +56,9 @@ loopback port. Supply the token through the supervisor's secret environment.
 The CLI permits plain HTTP only for loopback hosts and refuses redirects so it
 cannot forward a bearer token to another destination. A single shared token
 means all authorized clients have the same permissions; this is a private
-workspace service, not a multi-tenant public application.
+workspace service, not a multi-tenant public application. To give people their
+own sign-in and record who made each change, put it behind
+[Cloudflare Access](cloudflare-access.md).
 
 Live processes and environment values do not survive an environment snapshot by
 assumption; restart the service with those settings when needed. No external
@@ -100,7 +103,8 @@ retain their original base revision intentionally. The CLI never silently
 advances their revision, merges edits, or replaces their files. Local source
 formatting is normalized on export; document IDs, graph data and authorship
 metadata are preserved as JSON values. Service edits do not impersonate an Arrow
-contributor or allocate native Arrow resource IDs.
+contributor: resources they create use Arrow's native UIDs under a dedicated
+author (see [Creating resources](#creating-resources)).
 
 For a remote service put `--url https://YOUR_SERVICE` **before** the subcommand.
 Set the same token securely in that client's environment. The checked-out URL
@@ -137,12 +141,43 @@ A minimal `story-edits.json`:
 | `replace_document` | `document`, `value` | Replace one chapter with a full Arrow object, such as an editor export. |
 | `replace_bundle` | `bundle` | Replace all sources; must be the only operation. Used by checkout push. |
 | `restore_revision` | positive integer `revision` | Propose restoring a historical snapshot; must be the only operation. |
+| `add_node` | `document`, `type`, optional `scene`, `name`, `data`, `offset`, `ref` | Create a node with a new UID and place it in the scene (the only scene by default). |
+| `remove_node` | `document`, `node` | Delete a node, its placement, wires into it and package links from or to it. Entries cannot be removed. |
+| `add_variable` | `document`, optional `name`, `type`, `init`, `key`, `ref` | Create a chapter variable mapped to registry `key` (default: `name`). |
+| `add_character` | `document`, optional `name`, `color`, `key`, `ref` | Create a chapter character mapped to registry `key` (default: `name`). |
 
 UIDs remain decimal strings. Batches contain 1–100 operations and are validated
 as a whole. The service rejects unknown operation fields and preserves the story
-id. New node/resource allocation remains owned by Arrow; full document/bundle
-replacement supports those editor changes. There is no arbitrary filesystem,
-shell, SQL or JSON-pointer execution operation.
+id. There is no arbitrary filesystem, shell, SQL or JSON-pointer execution
+operation.
+
+### Creating resources
+
+`add_node`, `add_variable` and `add_character` allocate UIDs exactly as Arrow's
+native generator does: `(chapter << 43) | (author << 37) | seed`. They use a
+dedicated `Arrow Story Service` entry in the chapter's `meta.authors`, created in
+the first free author slot, so a human contributor's seed is never advanced.
+Allocation skips UIDs already used in the chapter. Chapters that use time-based
+Snowflake UIDs (`meta.epoch`) must create resources in Arrow.
+
+Give a created resource a `ref`, then write `"@ref"` in later operations of the
+same batch: as `node`, `target` or `target_node`, or as an exact value inside
+`data` (for example `"character": "@hesk"`), where it becomes the integer UID.
+References are local to their chapter and batch. Read the proposal diff for the
+allocated UIDs.
+
+```json
+[
+  {"op": "add_character", "document": "followup", "name": "Hesk", "ref": "hesk"},
+  {"op": "add_node", "document": "followup", "type": "monolog", "ref": "line",
+   "data": {"character": "@hesk", "monolog": "The depot is this way."}},
+  {"op": "set_connection", "document": "followup", "node": "6", "slot": 0, "target": "@line"}
+]
+```
+
+New variables and characters always join the shared registry. A new key needs
+every field (`name`, `type` and `init` for variables; `name` for characters).
+An existing key reuses its registry fields, and a chapter maps each key once.
 
 Registry defaults affect authored initial values and self-reference operands.
 They do not migrate game saves, reset live variables, or replace existing game
@@ -167,7 +202,35 @@ The revision insert, head update and proposal status update share one SQLite
 transaction. A failed write rolls them back together. Restoring revision 1 while
 head is 3 creates revision **4** containing the old sources; revisions 2 and 3
 remain readable. Server timestamps and caller-supplied messages record the edit
-history; shared-token clients do not have verified per-user identities.
+history. Revisions record `committed_by` and proposals `created_by`/`applied_by`:
+a verified Cloudflare Access identity, or `bearer-token` for shared-token clients,
+which have no per-user identity.
+
+## Live editing
+
+Live commits let Arrow editors and agents edit the same story at once.
+`POST /v1/stories/{id}/commits` takes the same body as a proposal and publishes
+immediately, without a review step. Every live commit is still a revision that
+can be read, diffed and restored through a proposal.
+
+- **Rebasing.** When others committed after `base_revision`, structured
+  operations replay on the newest revision, and `replace_document` or
+  `replace_bundle` merge three ways against it, object by object. Edits that
+  touch different nodes, fields, placements or registry entries combine.
+- **Clashes.** If both sides changed the same value since `base_revision`, the
+  commit is refused with **409** `edit_conflict`, listing up to 20 conflicting
+  paths. Read again and redo that change.
+- **Diagnostics follow.** A live revision publishes with validation
+  `{"ok": null, "pending": true}`; the native compiler then records its result.
+  Unfinished work that does not compile still syncs and shows its errors.
+  Superseded pending revisions are marked `superseded`. The reviewed proposal
+  path keeps its rule that only compiling candidates commit.
+- **Following changes.** `GET /v1/stories/{id}/head?after=N&wait=S` holds the
+  request up to `S` seconds (at most 25) until a revision newer than `N` exists,
+  so editors see others' edits within moments. `GET /v1/stories/{id}/changes?from=A&to=B`
+  returns the diff between two revisions (`to` defaults to head).
+- Integral numbers are stored as integers, so Godot's `260.0` and `260` are the
+  same value. `restore_revision` is not a live operation.
 
 ## HTTP contract
 
@@ -178,12 +241,16 @@ revisions when applicable. Route/parameter errors may use standard HTTP errors.
 | Method and route | Request / result |
 | --- | --- |
 | `GET /health` | Public process liveness. |
+| `GET /v1/session` | `{"actor": ..., "via": "cloudflare-access" \| "bearer-token"}` for the current credentials. |
 | `GET /v1/stories` | Story ids, current heads and creation times. |
 | `POST /v1/stories` | `{ "bundle": ..., "message": "..." }`; validated revision 1, HTTP 201. Duplicate id is 409. |
 | `GET /v1/stories/{id}` | Current revision with sources and validation. |
 | `GET /v1/stories/{id}/revisions?after=0&limit=50` | Historical revision metadata, ascending. |
 | `GET /v1/stories/{id}/revisions/{n}` | Immutable historical sources and validation. |
 | `POST /v1/stories/{id}/proposals` | `{ "base_revision": 1, "operations": [...], "message": "..." }`; reviewed candidate, diff and validation, HTTP 201. |
+| `POST /v1/stories/{id}/commits` | Same body as a proposal; publishes a live revision at once, rebased onto head (HTTP 201). Clashes are 409 `edit_conflict`. |
+| `GET /v1/stories/{id}/head?after=0&wait=0` | Head revision metadata and diagnostics; with `wait`, held until head passes `after`. |
+| `GET /v1/stories/{id}/changes?from=1&to=2` | Diff between two revisions; `to` defaults to head. |
 | `GET /v1/stories/{id}/proposals?after=0&limit=50` | Proposal metadata/status; use returned `sequence` as the next `after` cursor. |
 | `GET /v1/stories/{id}/proposals/{proposal}` | Candidate, operations, diff, validation and current status. |
 | `POST /v1/stories/{id}/proposals/{proposal}/apply` | `{}`; atomically commit or return the already-applied revision. |

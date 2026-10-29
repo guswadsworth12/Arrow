@@ -8,10 +8,15 @@ func _initialize() -> void:
 func run_tests() -> void:
 	var client = Client.new()
 	root.add_child(client)
+	# Only a same-origin browser PWA may connect without a token (using its Cloudflare Access sign-in).
+	assert(not client.configure(OS.get_environment("ARROW_STORY_URL"), ""))
+	assert(client.access_headers.is_empty() == OS.get_environment("ARROW_STORY_ACCESS_CLIENT_ID").is_empty())
 	assert(client.configure(OS.get_environment("ARROW_STORY_URL"), "x".repeat(40)))
 	var response = await client.request(HTTPClient.METHOD_GET, "/v1/stories")
 	assert(not response.ok and response.status == 401)
 	assert(client.configure(OS.get_environment("ARROW_STORY_URL"), OS.get_environment("ARROW_STORY_API_TOKEN")))
+	response = await client.request(HTTPClient.METHOD_GET, "/v1/session")
+	assert(response.ok and response.value.actor == "bearer-token")
 	response = await client.request(HTTPClient.METHOD_GET, "/v1/stories")
 	assert(response.ok)
 	response = await client.request(HTTPClient.METHOD_GET, "/health")

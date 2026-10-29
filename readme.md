@@ -135,6 +135,8 @@ An optional [HTTP story service and CLI](docs/story-service.md) now provide SQLi
 revision history, compiler-validated edit proposals, conflict detection and
 reversible commits. It uses the same package compiler as the Godot addon. Arrow
 can exchange source checkouts through the CLI or use the desktop UI below.
+Hosted behind [Cloudflare Access](docs/cloudflare-access.md), people sign in instead
+of sharing a token, and every import, proposal and apply records who made it.
 An [OAuth-protected remote MCP deployment](docs/remote-mcp.md) connects compatible
 hosts to the same workspace, with optional Google sign-in through Keycloak.
 

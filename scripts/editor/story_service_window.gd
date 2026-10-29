@@ -2,6 +2,7 @@ extends Window
 ## Shared story review UI; Arrow project saves stay local until an explicit apply.
 const Client = preload("story_service_client.gd")
 const Archive = preload("story_archive.gd")
+const LiveSync = preload("story_live_sync.gd")
 const BINDINGS_PATH = "user://story-service-bindings.json"
 const SNAPSHOT_PATH = "user://story-service-loaded.json"
 var Main
@@ -23,11 +24,13 @@ var bindings: Dictionary = {}
 var cursor = 0
 var last_cursor = 0
 var working = false
+var connected = false
 var import_picker: FileDialog
 var story_settings: Window
 var browser_reader
 var export_picker: FileDialog
 var export_bytes = PackedByteArray()
+var live
 
 func _ready() -> void:
 	title = "Arrow · Story service"
@@ -35,8 +38,14 @@ func _ready() -> void:
 	size = Vector2i(1040, 730)
 	min_size = Vector2i(760, 580)
 	close_requested.connect(hide)
+	visibility_changed.connect(_connect_signed_in)
 	client = Client.new()
 	add_child(client)
+	# Live sync outlives this window being hidden and draws its indicator over the editor.
+	live = LiveSync.new()
+	live.Main = Main
+	live.revision_changed.connect(_live_revision)
+	Main.add_child.call_deferred(live)
 	var margin = MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
@@ -48,9 +57,12 @@ func _ready() -> void:
 	server = _field(connection, "Service URL", OS.get_environment("ARROW_STORY_URL"))
 	if server.text.is_empty():
 		server.text = str(JavaScriptBridge.get_interface("location").origin) if Html5Helpers.Utils.is_browser() else "http://127.0.0.1:8765"
-	token = _field(connection, "Bearer token (session only)", OS.get_environment("ARROW_STORY_API_TOKEN"))
+	var token_hint = "Bearer token (blank when signed in)" if Html5Helpers.Utils.is_browser() else "Bearer token (session only)"
+	token = _field(connection, token_hint, OS.get_environment("ARROW_STORY_API_TOKEN"))
 	token.secret = true
 	_button(connection, "Connect", connect_service)
+	if Html5Helpers.Utils.is_browser():
+		_button(connection, "Sign in…", sign_in)
 	var story_row = _row(layout)
 	stories = OptionButton.new()
 	stories.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -65,6 +77,7 @@ func _ready() -> void:
 	chapter_row.add_child(chapters)
 	controls.append(chapters)
 	_button(chapter_row, "Open chapter in Arrow", open_chapter)
+	_button(chapter_row, "Open chapter live", func(): open_chapter(true))
 	_button(chapter_row, "Shared story settings…", open_story_settings)
 	message = _field(_row(layout), "Review message for import or editor changes", "")
 	var exports = _row(layout)
@@ -72,6 +85,8 @@ func _ready() -> void:
 	_button(exports, "Export loaded story for Dialogic", func(): export_story(true))
 	var actions = _row(layout)
 	_button(actions, "Propose current Arrow chapter", propose_current)
+	_button(actions, "Go live on current chapter", go_live)
+	_button(actions, "Stop live", stop_live)
 	_button(actions, "Refresh proposals", refresh_proposals)
 	next_button = _button(actions, "Next page", next_page)
 	var split = HSplitContainer.new()
@@ -133,6 +148,8 @@ func _ready() -> void:
 					chapters.add_item(chapter)
 				status.text = "Cached story loaded for offline reading/export. Enter your token and connect for shared edits."
 	_set_working(false)
+	# A new Window is already visible, so the first open never emits visibility_changed.
+	_connect_signed_in.call_deferred()
 
 func _row(parent: Node) -> HBoxContainer:
 	var row = HBoxContainer.new()
@@ -182,13 +199,34 @@ func _connection_changed() -> void:
 	_clear_review()
 	client.base_url = ""
 	client.bearer = ""
+	connected = false
 	status.text = "Connection changed. Connect again. Local chapter bindings retain their original service and revision."
 
 func _configure() -> bool:
 	if not client.configure(server.text, token.text):
-		status.text = "Use HTTPS (or HTTP on loopback) and a printable bearer token of at least 32 characters."
+		status.text = "Use HTTPS (or HTTP on loopback) and a printable bearer token of at least 32 characters, or leave the token blank to use this site's sign-in."
 		return false
 	return true
+
+## Browser only: connect with this site's Cloudflare Access sign-in when the window opens.
+## A separate probe client checks quietly first, so a site without Access leaves the window untouched.
+func _connect_signed_in() -> void:
+	if not visible or connected or working or not token.text.is_empty() or not Client.same_origin(server.text):
+		return
+	var probe = Client.new()
+	add_child(probe)
+	var signed_in = false
+	if probe.configure(server.text, ""):
+		var session = await probe.request(HTTPClient.METHOD_GET, "/v1/session")
+		signed_in = session.ok
+	probe.queue_free()
+	if signed_in and not connected and not working and token.text.is_empty() and Client.same_origin(server.text):
+		await connect_service()
+
+## Browser only: reload through Cloudflare Access to renew an expired sign-in. A unique URL bypasses the offline cache.
+func sign_in() -> void:
+	status.text = "Opening sign-in. Arrow reloads afterwards; save local work first."
+	JavaScriptBridge.eval("location.assign(location.origin + '/?signin=' + Date.now())")
 
 func _story() -> String:
 	return "" if stories.selected < 0 else str(stories.get_item_metadata(stories.selected))
@@ -205,10 +243,16 @@ func _send(method: HTTPClient.Method, path: String, body: Variant = null) -> Dic
 		_clear_review()
 		review.text = JSON.stringify(response.value, "  ")
 		status.text = "Service request failed (HTTP %s). See details above. Local edits and their base revision are retained." % response.status
+		var error = response.value.get("error")
+		if error is Dictionary and error.get("code") == "signin_required":
+			status.text = str(error.get("message"))
 	return response
 
 func connect_service() -> void:
 	if working or not _configure():
+		return
+	var session = await _send(HTTPClient.METHOD_GET, "/v1/session")
+	if not session.ok:
 		return
 	var response = await _send(HTTPClient.METHOD_GET, "/v1/stories")
 	if response.ok:
@@ -220,7 +264,8 @@ func connect_service() -> void:
 		for item in response.value.get("stories", []):
 			stories.add_item("%s · revision %s" % [item.id, int(item.head)])
 			stories.set_item_metadata(stories.item_count - 1, item.id)
-		status.text = "Connected. Choose a story and load it, or import a story manifest."
+		connected = true
+		status.text = "Connected as %s. Choose a story and load it, or import a story manifest." % session.value.get("actor", "unknown")
 
 func load_story() -> void:
 	if working or _story().is_empty() or not _configure():
@@ -241,7 +286,7 @@ func load_story() -> void:
 		_clear_review()
 		status.text = "Loaded %s revision %s. Opening a chapter creates a separate local Arrow project." % [snapshot.story_id, int(snapshot.revision)]
 
-func open_chapter() -> void:
+func open_chapter(live_mode: bool = false) -> void:
 	if working or snapshot.is_empty() or chapters.selected < 0:
 		return
 	if not Main.Mind.ProMan.is_project_saved():
@@ -264,6 +309,9 @@ func open_chapter() -> void:
 	bindings[str(uid)] = {"service": client.base_url, "story_id": snapshot.story_id, "chapter": chapter, "revision": int(snapshot.revision), "filename": filename, "project_path": ProjectSettings.globalize_path(Main.Mind.ProMan.get_project_file_path(uid))}
 	var persisted = _save_bindings()
 	status.text = "Editing %s at base revision %s. Use Arrow normally, then return here to propose this chapter." % [chapter, int(snapshot.revision)]
+	if live_mode:
+		live.start(client, snapshot.story_id, chapter, uid, int(snapshot.revision), true)
+		status.text = "Live: %s publishes as you edit and shows others' edits as they land. Every change is a revision you can restore." % chapter
 	if not persisted:
 		status.text += " Binding could not be saved; keep this session open and save a local copy."
 	else:
@@ -278,17 +326,47 @@ func _save_bindings() -> bool:
 			return true
 	return false
 
-func propose_current() -> void:
-	if working or not _configure():
-		return
+## The open project's service binding, or empty after explaining why there is none.
+func _current_binding() -> Dictionary:
 	var uid = Main.Mind.ProMan.get_active_project_id()
 	var binding = bindings.get(str(uid), {})
 	var listing = Main.Mind.ProMan.get_project_listing_by_id(uid)
 	if not binding is Dictionary or binding.is_empty() or not listing is Dictionary or listing.filename != binding.get("filename") or ProjectSettings.globalize_path(Main.Mind.ProMan.get_project_file_path(uid)) != binding.get("project_path"):
 		status.text = "Open a service chapter from this window first. The current project has no service binding."
-		return
+		return {}
 	if binding.service != client.base_url:
 		status.text = "This chapter belongs to another service. Reconnect to its original URL."
+		return {}
+	return binding
+
+## Resumes live editing of a chapter opened earlier; local edits since then are merged in.
+func go_live() -> void:
+	if working or not _configure():
+		return
+	var binding = _current_binding()
+	if binding.is_empty():
+		return
+	if Main.Mind._SNAPSHOT_INDEX_OF_PREVIEW >= 0:
+		status.text = "Return to the editable project before going live."
+		return
+	live.start(client, binding.story_id, binding.chapter, Main.Mind.ProMan.get_active_project_id(), int(binding.revision), false)
+	status.text = "Live from revision %s: local edits since then are merged with the shared story." % int(binding.revision)
+
+func stop_live() -> void:
+	live.stop()
+	status.text = "Live editing stopped. The local chapter keeps its last synced revision as its base."
+
+func _live_revision(revision: int) -> void:
+	var binding = bindings.get(str(live.project_uid))
+	if binding is Dictionary:
+		binding.revision = revision
+		_save_bindings()
+
+func propose_current() -> void:
+	if working or not _configure():
+		return
+	var binding = _current_binding()
+	if binding.is_empty():
 		return
 	if message.text.strip_edges().is_empty():
 		status.text = "Enter a review message before proposing edits."
@@ -322,7 +400,7 @@ func _load_proposals() -> void:
 		last_cursor = cursor
 		for item in response.value.get("proposals", []):
 			proposals.add_item("%s · r%s · %s" % [item.status, int(item.base_revision), item.message])
-			proposals.set_item_tooltip(proposals.item_count - 1, "%s\n%s" % [item.id, item.message])
+			proposals.set_item_tooltip(proposals.item_count - 1, "%s\n%s\nProposed by %s" % [item.id, item.message, _who(item.get("created_by"))])
 			proposals.set_item_metadata(proposals.item_count - 1, item.id)
 			last_cursor = int(item.sequence)
 		_set_working(false)
@@ -343,8 +421,11 @@ func _show_review(value: Dictionary) -> void:
 		"%s · %s" % [str(value.status).to_upper(), value.id],
 		"Story: %s" % value.story_id,
 		"Base revision %s · current revision %s" % [int(value.base_revision), int(value.current_revision)],
-		"Message: " + str(value.message), "",
-		"Changes (%s)" % value.diff.size(), ""]
+		"Proposed by %s at %s" % [_who(value.get("created_by")), value.created_at],
+		"Message: " + str(value.message), ""]
+	if value.get("applied_revision") != null:
+		lines.insert(4, "Applied as revision %s by %s" % [int(value.applied_revision), _who(value.get("applied_by"))])
+	lines.append_array(["Changes (%s)" % value.diff.size(), ""])
 	for change in value.diff:
 		lines.append(str(change.path))
 		lines.append("Before: " + (JSON.stringify(change.before, "  ") if change.before_exists else "(absent)"))
@@ -358,6 +439,10 @@ func _show_review(value: Dictionary) -> void:
 	review.text = "\n".join(lines)
 	_set_working(false)
 
+## Identity recorded by the service; older revisions and proposals predate it.
+static func _who(actor: Variant) -> String:
+	return str(actor) if actor is String and not actor.is_empty() else "(not recorded)"
+
 func apply_reviewed() -> void:
 	if working or reviewed.get("status") != "ready" or not _configure():
 		return
@@ -365,7 +450,7 @@ func apply_reviewed() -> void:
 	if response.ok:
 		_clear_review()
 		status.text = "Applied revision %s. Local chapters keep their original base. Load the story and open a fresh chapter to continue." % response.value.revision
-		review.text = "Committed %s revision %s\nSHA-256: %s" % [response.value.story_id, int(response.value.revision), response.value.sha256]
+		review.text = "Committed %s revision %s by %s\nSHA-256: %s" % [response.value.story_id, int(response.value.revision), _who(response.value.get("committed_by")), response.value.sha256]
 
 func import_manifest(path: String) -> void:
 	if working or not _configure():
