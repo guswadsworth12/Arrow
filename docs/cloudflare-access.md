@@ -27,7 +27,7 @@ browser ──HTTPS──> Cloudflare Access ──tunnel──> reverse proxy �
 
 ## Cloudflare dashboard
 
-In **Zero Trust → Access → Applications**:
+In **Zero Trust → Access controls → Applications**:
 
 1. **Add an application → Self-hosted**, for the Arrow hostname (no path).
    Choose a session duration, e.g. 1 month. Add an **Allow** policy listing the people
@@ -42,8 +42,8 @@ In **Zero Trust → Access → Applications**:
    Your team domain (`https://TEAM.cloudflareaccess.com`) is shown in the Zero Trust
    **Settings** as the team name/domain.
 4. Optional, for the CLI, MCP adapter or desktop Arrow from outside your network:
-   **Access → Service Auth → Create service token**, then add a **Service Auth** policy
-   for that token to the first application.
+   **Access controls → Service credentials → Service Tokens → Create Service Token**,
+   then add a **Service Auth** policy for that token to the first application.
 
 ## Service configuration
 
