@@ -219,13 +219,51 @@ def create_server(client: Client, *, allow_apply: bool = False) -> FastMCP:
             result.pop("bundle", None)
             return result
 
+        @server.tool(annotations=PROPOSE)
+        def commit_story_edits(story_id: str, base_revision: Annotated[int, Field(ge=1, strict=True)],
+                               operations: Annotated[list[Edit], Field(min_length=1, max_length=100)],
+                               message: Annotated[str, Field(min_length=1, max_length=512)]) -> dict:
+            """Live editing: publish edits immediately, as people editing in Arrow at the same time do.
+
+            Same operations as propose_story_edits (restore_revision excepted). If others committed since
+            base_revision, the edits are replayed on the newest revision; edit_conflict lists paths someone
+            else changed since base_revision: read again, then redo that change. Arrow editors in live mode
+            show the result within seconds. Compiler diagnostics follow; check story_head before reporting done.
+            """
+            result = request("POST", story_path(story_id) + "/commits", {"base_revision": base_revision,
+                "operations": [op.model_dump(exclude_unset=True) for op in operations], "message": message})
+            before = request("GET", story_path(story_id) + f"/changes?from={result['revision'] - 1 if result['changed'] else result['revision']}"
+                             f"&to={result['revision']}")
+            result.pop("bundle", None)
+            result["diff"] = before["diff"]
+            return result
+
+    @server.tool(annotations=READ)
+    def story_head(story_id: str, after_revision: Annotated[int, Field(ge=0, strict=True)] = 0,
+                   wait_seconds: Annotated[float, Field(ge=0, le=25)] = 0) -> dict:
+        """Current head revision, who committed it and its compiler diagnostics (no sources).
+
+        With wait_seconds, waits up to that long for a revision newer than after_revision, such as
+        an edit someone is making in Arrow right now.
+        """
+        return request("GET", story_path(story_id) + f"/head?after={after_revision}&wait={wait_seconds}")
+
+    @server.tool(annotations=READ)
+    def story_changes(story_id: str, from_revision: Annotated[int, Field(ge=1, strict=True)],
+                      to_revision: Annotated[int | None, Field(ge=1, strict=True)] = None) -> dict:
+        """Diff between two revisions (to defaults to head): what changed, for example edits made in Arrow."""
+        path = story_path(story_id) + f"/changes?from={from_revision}"
+        if to_revision is not None:
+            path += f"&to={to_revision}"
+        return request("GET", path)
+
     return server
 
 
 def main():
     parser = argparse.ArgumentParser(description="Arrow MCP stdio adapter over the story HTTP service")
     parser.add_argument("--url", default=os.environ.get("ARROW_STORY_URL", "http://127.0.0.1:8765"))
-    parser.add_argument("--allow-apply", action="store_true", help="Expose explicit commit tool; default is read/propose only")
+    parser.add_argument("--allow-apply", action="store_true", help="Expose apply and live commit tools; default is read/propose only")
     args = parser.parse_args()
     try:
         client = Client(args.url)

@@ -26,7 +26,9 @@ func _state() -> Dictionary:
 		"story": panel.snapshot.get("story_id", ""), "revision": panel.snapshot.get("revision", 0),
 		"proposal": panel.reviewed.get("id", ""), "proposal_status": panel.reviewed.get("status", ""),
 		"review": panel.review.text, "token_empty": panel.token.text.is_empty(),
-		"local_id": main.Mind.ProMan.get_active_project_id(), "bindings": panel.bindings.size()}
+		"local_id": main.Mind.ProMan.get_active_project_id(), "bindings": panel.bindings.size(),
+		"live": panel.live.active, "live_revision": panel.live.revision, "live_status": panel.live._indicator.text,
+		"nodes": JSON.parse_string(JSON.stringify(main.Mind._PROJECT.resources.nodes))}
 
 func _command(args) -> void:
 	var data = JSON.parse_string(str(args[0]))
@@ -77,6 +79,17 @@ func _command(args) -> void:
 			panel.export_story(data.get("dialogic", false))
 		"chapter_export":
 			main.Mind.export_project_from_browser(data.format)
+		"open_live":
+			_choice(panel.chapters, "briefing")
+			panel.open_chapter(true)
+			await get_tree().process_frame
+		"live_edit":
+			# A graph edit as Arrow makes it: change the resource, then record the history checkpoint.
+			main.Mind.update_resource(int(data.node), {"data": {"content": data.content}}, "nodes")
+			main.Mind.reset_project_save_status(false)
+		"live_move":
+			main.Mind.update_node_map(int(data.node), {"offset": [int(data.x), int(data.y)]})
+			main.Mind.reset_project_save_status(false)
 		"reopen_local":
 			for key in panel.bindings:
 				main.Mind.open_project(int(key))

@@ -459,6 +459,61 @@ def changes(before: Any, after: Any, path: str = "") -> list[dict]:
     return []
 
 
+_MISSING = object()
+
+
+def _same(left: Any, right: Any) -> bool:
+    # JSON equality: True is not 1, and key order does not matter.
+    if left is _MISSING or right is _MISSING:
+        return left is right
+    return canonical(left) == canonical(right)
+
+
+def _merge(base: Any, ours: Any, theirs: Any, path: str, conflicts: list) -> Any:
+    if _same(ours, theirs) or _same(theirs, base):
+        return ours
+    if _same(ours, base):
+        return theirs
+    if all(isinstance(value, dict) for value in (base, ours, theirs)):
+        merged = {}
+        for key in sorted(base.keys() | ours.keys() | theirs.keys()):
+            value = _merge(base.get(key, _MISSING), ours.get(key, _MISSING), theirs.get(key, _MISSING),
+                           path + "/" + key.replace("~", "~0").replace("/", "~1"), conflicts)
+            if value is not _MISSING:
+                merged[key] = value
+        return merged
+    conflicts.append(path)
+    return theirs
+
+
+def merge(base: Any, ours: Any, theirs: Any) -> tuple[Any, list[str]]:
+    """Three-way merge of JSON sources: objects merge per key, other values are atomic.
+
+    Returns the merged value and the paths both sides changed differently.
+    """
+    conflicts: list[str] = []
+    merged = _merge(base, ours, theirs, "", conflicts)
+    return copy.deepcopy(merged), conflicts
+
+
+def overlapping(ours: list[dict], theirs: list[dict]) -> list[str]:
+    """Paths changed by both diffs, where one path equals or contains the other."""
+    mine = [change["path"] for change in ours]
+    return sorted({path for path in mine for other in (change["path"] for change in theirs)
+                   if path == other or path.startswith(other + "/") or other.startswith(path + "/")})
+
+
+def whole_numbers(value: Any) -> Any:
+    """Godot's JSON writes integral floats such as 260.0; store them as the integers they are."""
+    if isinstance(value, dict):
+        return {key: whole_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [whole_numbers(item) for item in value]
+    if isinstance(value, float) and value.is_integer() and abs(value) <= MAX_EXACT_INTEGER:
+        return int(value)
+    return value
+
+
 def apply_operations(original: dict, operations: Any) -> dict:
     try:
         return _apply_operations(original, operations)

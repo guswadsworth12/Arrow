@@ -206,6 +206,32 @@ history. Revisions record `committed_by` and proposals `created_by`/`applied_by`
 a verified Cloudflare Access identity, or `bearer-token` for shared-token clients,
 which have no per-user identity.
 
+## Live editing
+
+Live commits let Arrow editors and agents edit the same story at once.
+`POST /v1/stories/{id}/commits` takes the same body as a proposal and publishes
+immediately, without a review step. Every live commit is still a revision that
+can be read, diffed and restored through a proposal.
+
+- **Rebasing.** When others committed after `base_revision`, structured
+  operations replay on the newest revision, and `replace_document` or
+  `replace_bundle` merge three ways against it, object by object. Edits that
+  touch different nodes, fields, placements or registry entries combine.
+- **Clashes.** If both sides changed the same value since `base_revision`, the
+  commit is refused with **409** `edit_conflict`, listing up to 20 conflicting
+  paths. Read again and redo that change.
+- **Diagnostics follow.** A live revision publishes with validation
+  `{"ok": null, "pending": true}`; the native compiler then records its result.
+  Unfinished work that does not compile still syncs and shows its errors.
+  Superseded pending revisions are marked `superseded`. The reviewed proposal
+  path keeps its rule that only compiling candidates commit.
+- **Following changes.** `GET /v1/stories/{id}/head?after=N&wait=S` holds the
+  request up to `S` seconds (at most 25) until a revision newer than `N` exists,
+  so editors see others' edits within moments. `GET /v1/stories/{id}/changes?from=A&to=B`
+  returns the diff between two revisions (`to` defaults to head).
+- Integral numbers are stored as integers, so Godot's `260.0` and `260` are the
+  same value. `restore_revision` is not a live operation.
+
 ## HTTP contract
 
 JSON bodies use `application/json`. Semantic errors use
@@ -222,6 +248,9 @@ revisions when applicable. Route/parameter errors may use standard HTTP errors.
 | `GET /v1/stories/{id}/revisions?after=0&limit=50` | Historical revision metadata, ascending. |
 | `GET /v1/stories/{id}/revisions/{n}` | Immutable historical sources and validation. |
 | `POST /v1/stories/{id}/proposals` | `{ "base_revision": 1, "operations": [...], "message": "..." }`; reviewed candidate, diff and validation, HTTP 201. |
+| `POST /v1/stories/{id}/commits` | Same body as a proposal; publishes a live revision at once, rebased onto head (HTTP 201). Clashes are 409 `edit_conflict`. |
+| `GET /v1/stories/{id}/head?after=0&wait=0` | Head revision metadata and diagnostics; with `wait`, held until head passes `after`. |
+| `GET /v1/stories/{id}/changes?from=1&to=2` | Diff between two revisions; `to` defaults to head. |
 | `GET /v1/stories/{id}/proposals?after=0&limit=50` | Proposal metadata/status; use returned `sequence` as the next `after` cursor. |
 | `GET /v1/stories/{id}/proposals/{proposal}` | Candidate, operations, diff, validation and current status. |
 | `POST /v1/stories/{id}/proposals/{proposal}/apply` | `{}`; atomically commit or return the already-applied revision. |

@@ -117,7 +117,8 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_discovery_schema_resource_and_authentication(self):
         async with self.session() as session:
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            self.assertEqual(set(tools), {"list_stories", "read_story", "list_story_revisions", "list_story_proposals", "read_story_proposal", "propose_story_edits"})
+            self.assertEqual(set(tools), {"list_stories", "read_story", "list_story_revisions", "list_story_proposals", "read_story_proposal",
+                                          "propose_story_edits", "story_head", "story_changes"})
             self.assertTrue(tools["read_story"].annotations.readOnlyHint)
             self.assertFalse(tools["propose_story_edits"].annotations.readOnlyHint)
             self.assertIn("oneOf", json.dumps(tools["propose_story_edits"].inputSchema))
@@ -158,6 +159,27 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(queue["proposals"][0]["status"], "applied")
             full = await self.call(session, "read_story_proposal", {**args, "include_candidate": True})
             self.assertIn("candidate", full)
+
+    async def test_live_commits_create_resources_and_follow_other_editors(self):
+        story = await self.fresh()
+        async with self.session(apply=True) as session:
+            live = await self.call(session, "commit_story_edits", {"story_id": story, "base_revision": 1, "message": "Add a beat live",
+                "operations": [{"op": "add_node", "document": "briefing", "type": "content", "ref": "beat", "data": {"content": "A live beat."}},
+                               {"op": "set_connection", "document": "briefing", "node": "9", "slot": 0, "target": "@beat"}]})
+            self.assertEqual((live["revision"], live["changed"]), (2, True))
+            self.assertNotIn("bundle", live)
+            self.assertIn("/documents/briefing/resources/nodes/" + str(1 << 37), [change["path"] for change in live["diff"]])
+            # Someone editing in Arrow commits next; the agent sees what changed.
+            Client(self.url, self.token).request("POST", f"/v1/stories/{story}/commits", {"base_revision": 2, "message": "Edited in Arrow",
+                "operations": [{"op": "update_node", "document": "briefing", "node": "2", "data": {"content": "Typed in Arrow."}}]})
+            head = await self.call(session, "story_head", {"story_id": story, "after_revision": 2, "wait_seconds": 5})
+            self.assertEqual(head["revision"], 3)
+            seen = await self.call(session, "story_changes", {"story_id": story, "from_revision": 2})
+            self.assertEqual([change["after"] for change in seen["diff"]], ["Typed in Arrow."])
+            clash = await session.call_tool("commit_story_edits", {"story_id": story, "base_revision": 2, "message": "Stale edit",
+                "operations": [{"op": "update_node", "document": "briefing", "node": "2", "data": {"content": "Agent text."}}]})
+            self.assertTrue(clash.isError)
+            self.assertIn("edit_conflict", clash.content[0].text)
 
     async def test_invalid_and_stale_edits_cannot_commit(self):
         story = await self.fresh()
